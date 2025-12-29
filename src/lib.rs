@@ -3,6 +3,28 @@
 //! This is a starter implementation for a decentralized prediction market
 //! running directly on Bitcoin via the Charms protocol.
 
+
+//! # Time Validation Approach
+//! 
+//! Charms runs in a zkVM on Bitcoin and doesn't provide direct access to block time or height.
+//! Here it is used the following approach for timestamp validation:
+//! 
+//! 1. **Primary Enforcement**: Scrolls enforces trading deadlines
+//!    - Scrolls can check block time/height before submitting transactions
+//!    - Invalid transactions are rejected at the Scrolls layer
+//! 
+//! 2. **Contract Validation**: Timestamp passed in operation data
+//!    - Operations (Mint, Burn) include `current_timestamp` field
+//!    - Contract validates `current_timestamp < trading_deadline`
+//!    - Provides defense-in-depth security
+//! 
+//! 3. **Auto-transition**: After trading_deadline, market status should transition to TradingClosed
+//!    - This is handled by the first transaction after the deadline
+//!    - Mint/Burn operations are rejected if deadline has passed
+//! 
+//! This approach balances security with practicality: Scrolls prevents invalid transactions
+//! from being submitted, while the contract validates timestamps for additional assurance.
+
 use charms_sdk::data::{
     charm_values, check, sum_token_amount, App, Data, Transaction, UtxoId, B32, NFT, TOKEN,
 };
