@@ -11,6 +11,117 @@ use sha2::{Digest, Sha256};
 use k256::schnorr::{Signature, VerifyingKey};
 use k256::ecdsa::signature::Verifier;
 
+// ============================================================================
+// STATE DEFINITIONS
+// ============================================================================
+
+/// Market state stored in the controller NFT
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MarketState {
+    /// Unique market identifier (derived from creation UTXO)
+    #[serde(with = "serde_bytes")]
+    pub market_id: [u8; 32],
+    
+    /// SHA256 hash of the market question
+    #[serde(with = "serde_bytes")]
+    pub question_hash: [u8; 32],
+    
+    /// Market configuration
+    pub params: MarketParams,
+    
+    /// Current status
+    pub status: MarketStatus,
+    
+    /// Resolution data (None until resolved)
+    pub resolution: Option<Resolution>,
+    
+    /// Token supply tracking
+    pub yes_supply: u64,
+    pub no_supply: u64,
+    pub max_supply: u64,
+    
+    /// Accumulated trading fees (sats)
+    pub fees: u64,
+    
+    /// Market creator's public key
+    #[serde(with = "serde_bytes")]
+    pub creator: [u8; 33],
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MarketParams {
+    /// Unix timestamp - trading stops after this
+    pub trading_deadline: u64,
+    
+    /// Unix timestamp - resolution available after this
+    pub resolution_deadline: u64,
+    
+    /// Fee in basis points (100 = 1%)
+    pub fee_bps: u16,
+    
+    /// Minimum bet amount in sats
+    pub min_bet: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum MarketStatus {
+    /// Market is open for trading
+    Active,
+    /// Trading closed, awaiting resolution
+    TradingClosed,
+    /// Market has been resolved
+    Resolved,
+    /// Market cancelled, refunds available
+    Cancelled,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Yes,
+    No,
+    Invalid, // Market invalidated, refunds available
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Resolution {
+    pub outcome: Outcome,
+    pub proof: ResolutionProof,
+    pub timestamp: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionProof {
+    /// Simple signed attestation
+    SignedAttestation {
+        #[serde(with = "serde_bytes")]
+        resolver_pubkey: [u8; 33],
+        #[serde(with = "serde_bytes")]
+        signature: [u8; 64],
+    },
+    /// Cross-chain proof from Cardano oracle
+    /// 
+    /// For Hackathon MVP: Uses trusted oracle signature verification
+    /// Full implementation would verify:
+    /// - tx_hash exists in block via merkle_proof
+    /// - Transaction contains outcome data
+    /// - block_hash is from valid Cardano block
+    /// - Merkle path is correct
+    /// 
+    /// This requires Cardano light client logic (not implemented in HackathonMVP)
+    CardanoOracle {
+        #[serde(with = "serde_bytes")]
+        tx_hash: [u8; 32],
+        #[serde(with = "serde_bytes")]
+        block_hash: [u8; 32],
+        merkle_proof: Vec<[u8; 32]>,
+        /// Trusted oracle public key (for Hackathon MVP signature verification)
+        #[serde(with = "serde_bytes")]
+        oracle_pubkey: [u8; 33],
+        /// Oracle signature over (market_id || outcome || tx_hash || block_hash)
+        #[serde(with = "serde_bytes")]
+        oracle_signature: [u8; 64],
+    },
+}
 
 // ============================================================================
 // APP CONTRACT
