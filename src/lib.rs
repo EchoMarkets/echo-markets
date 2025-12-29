@@ -145,3 +145,12 @@ fn validate_claim_fees(
     // TODO: Implement validation
     true
 }
+
+// ========================================================================
+// HELPER FUNCTIONS
+// ========================================================================
+
+fn validate_token_transfer(token_app: &App, tx: &Transaction) -> bool {
+    // TODO: Implement validation
+    true
+}
