@@ -124,6 +124,56 @@ pub enum ResolutionProof {
 }
 
 // ============================================================================
+// OPERATIONS
+// ============================================================================
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum MarketOperation {
+    /// Create a new prediction market
+    Create {
+        question_hash: [u8; 32],
+        params: MarketParams,
+    },
+    
+    /// Mint complete sets (1 YES + 1 NO per collateral unit)
+    Mint {
+        collateral_amount: u64,
+        /// Current timestamp (Unix seconds) - validated against trading_deadline
+        /// Primary enforcement is at Scrolls layer, this is additional validation
+        current_timestamp: u64,
+    },
+    
+    /// Burn complete sets to recover collateral
+    Burn {
+        set_count: u64,
+        /// Current timestamp (Unix seconds) - validated against trading_deadline
+        /// Primary enforcement is at Scrolls layer, this is additional validation
+        current_timestamp: u64,
+    },
+    
+    /// Resolve the market with outcome
+    Resolve {
+        outcome: Outcome,
+        proof: ResolutionProof,
+        /// Current timestamp (Unix seconds) - validated against resolution_deadline
+        /// Primary enforcement is at Scrolls layer, this is additional validation
+        current_timestamp: u64,
+    },
+    
+    /// Redeem winning tokens for collateral
+    Redeem {
+        yes_amount: u64,
+        no_amount: u64,
+    },
+    
+    /// Cancel market (creator only, before resolution)
+    Cancel,
+    
+    /// Claim accumulated fees (creator or protocol only, after resolution)
+    ClaimFees,
+}
+
+// ============================================================================
 // APP CONTRACT
 // ============================================================================
 
