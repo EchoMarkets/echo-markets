@@ -1,131 +1,147 @@
+//! Charms Echo Markets - Core Contract
+//! 
+//! This is a starter implementation for a decentralized prediction market
+//! running directly on Bitcoin via the Charms protocol.
+
 use charms_sdk::data::{
     charm_values, check, sum_token_amount, App, Data, Transaction, UtxoId, B32, NFT, TOKEN,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use k256::schnorr::{Signature, VerifyingKey};
+use k256::ecdsa::signature::Verifier;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NftContent {
-    pub ticker: String,
-    pub remaining: u64,
-}
 
+// ============================================================================
+// APP CONTRACT
+// ============================================================================
+
+/// Main app contract predicate for Charms
+/// 
+/// # Arguments
+/// * `app` - The app being validated
+/// * `tx` - The transaction context
+/// * `x` - Public input data (operation)
+/// * `w` - Private witness data (signatures, etc.)
+/// 
+/// # Returns
+/// * `true` if the transaction satisfies the contract
 pub fn app_contract(app: &App, tx: &Transaction, x: &Data, w: &Data) -> bool {
-    let empty = Data::empty();
-    assert_eq!(x, &empty);
+    // Market state is stored in an NFT, so market operations require NFT tag
+    // Token operations (YES/NO tokens) use TOKEN tag
     match app.tag {
         NFT => {
-            check!(nft_contract_satisfied(app, tx, w))
+            // Deserialize the operation from public input
+            let operation: MarketOperation = match x.value::<MarketOperation>() {
+                Ok(op) => op,
+                Err(_) => return false,
+            };
+            
+            // Get witness bytes - try to deserialize as Vec<u8> or use empty
+            let witness_bytes: Vec<u8> = w.value().unwrap_or_default();
+            
+            match operation {
+        MarketOperation::Create { question_hash, params } => {
+            validate_create(app, tx, &question_hash, &params)
+        }
+        MarketOperation::Mint { collateral_amount, current_timestamp } => {
+            validate_mint(app, tx, collateral_amount, current_timestamp)
+        }
+        MarketOperation::Burn { set_count, current_timestamp } => {
+            validate_burn(app, tx, set_count, current_timestamp)
+        }
+        MarketOperation::Resolve { outcome, proof, current_timestamp } => {
+            validate_resolve(app, tx, &outcome, &proof, &witness_bytes, current_timestamp)
+        }
+        MarketOperation::Redeem { yes_amount, no_amount } => {
+            validate_redeem(app, tx, yes_amount, no_amount)
+        }
+        MarketOperation::Cancel => {
+            validate_cancel(app, tx, &witness_bytes)
+        }
+        MarketOperation::ClaimFees => {
+            validate_claim_fees(app, tx, &witness_bytes)
+        }
+            }
         }
         TOKEN => {
-            check!(token_contract_satisfied(app, tx))
+            // Validate YES/NO token transfers
+            validate_token_transfer(app, tx)
         }
-        _ => unreachable!(),
+        _ => false,
     }
+}
+
+// ========================================================================
+// VALIDATION FUNCTIONS
+// ========================================================================
+
+fn validate_create(
+    app: &App,
+    tx: &Transaction,
+    question_hash: &[u8; 32],
+    params: &MarketParams,
+) -> bool {
+    // TODO: Implement validation
     true
 }
 
-// TODO replace with your own logic
-fn nft_contract_satisfied(app: &App, tx: &Transaction, w: &Data) -> bool {
-    let token_app = &App {
-        tag: TOKEN,
-        identity: app.identity.clone(),
-        vk: app.vk.clone(),
-    };
-    check!(can_mint_nft(app, tx, w) || can_mint_token(&token_app, tx));
+fn validate_mint(
+    app: &App,
+    tx: &Transaction,
+    collateral_amount: u64,
+    current_timestamp: u64,
+) -> bool {
+    // TODO: Implement validation
     true
 }
 
-fn can_mint_nft(nft_app: &App, tx: &Transaction, w: &Data) -> bool {
-    let w_str: Option<String> = w.value().ok();
-
-    check!(w_str.is_some());
-    let w_str = w_str.unwrap();
-
-    // can only mint an NFT with this contract if the hash of `w` is the identity of the NFT.
-    check!(hash(&w_str) == nft_app.identity);
-
-    // can only mint an NFT with this contract if spending a UTXO with the same ID as passed in `w`.
-    let w_utxo_id = UtxoId::from_str(&w_str).unwrap();
-    check!(tx.ins.iter().any(|(utxo_id, _)| utxo_id == &w_utxo_id));
-
-    let nft_charms = charm_values(nft_app, tx.outs.iter()).collect::<Vec<_>>();
-
-    // can mint exactly one NFT.
-    check!(nft_charms.len() == 1);
-    // the NFT has the correct structure.
-    check!(nft_charms[0].value::<NftContent>().is_ok());
+fn validate_burn(
+    app: &App,
+    tx: &Transaction,
+    set_count: u64,
+    current_timestamp: u64,
+) -> bool {
+    // TODO: Implement validation
     true
 }
 
-pub(crate) fn hash(data: &str) -> B32 {
-    let hash = Sha256::digest(data);
-    B32(hash.into())
-}
-
-// TODO replace with your own logic
-fn token_contract_satisfied(token_app: &App, tx: &Transaction) -> bool {
-    check!(can_mint_token(token_app, tx));
+fn validate_resolve(
+    app: &App,
+    tx: &Transaction,
+    outcome: &Outcome,
+    proof: &ResolutionProof,
+    _witness: &[u8],
+    current_timestamp: u64,
+) -> bool {
+    // TODO: Implement validation
     true
 }
 
-fn can_mint_token(token_app: &App, tx: &Transaction) -> bool {
-    let nft_app = App {
-        tag: NFT,
-        identity: token_app.identity.clone(),
-        vk: token_app.vk.clone(),
-    };
-
-    let Some(nft_content): Option<NftContent> =
-        charm_values(&nft_app, tx.ins.iter().map(|(_, v)| v)).find_map(|data| data.value().ok())
-    else {
-        eprintln!("could not determine incoming remaining supply");
-        return false;
-    };
-    let incoming_supply = nft_content.remaining;
-
-    let Some(nft_content): Option<NftContent> =
-        charm_values(&nft_app, tx.outs.iter()).find_map(|data| data.value().ok())
-    else {
-        eprintln!("could not determine outgoing remaining supply");
-        return false;
-    };
-    let outgoing_supply = nft_content.remaining;
-
-    if !(incoming_supply >= outgoing_supply) {
-        eprintln!("incoming remaining supply must be >= outgoing remaining supply");
-        return false;
-    }
-
-    let Some(input_token_amount) = sum_token_amount(&token_app, tx.ins.iter().map(|(_, v)| v)).ok()
-    else {
-        eprintln!("could not determine input total token amount");
-        return false;
-    };
-    let Some(output_token_amount) = sum_token_amount(&token_app, tx.outs.iter()).ok() else {
-        eprintln!("could not determine output total token amount");
-        return false;
-    };
-
-    // can mint no more than what's allowed by the managing NFT state change.
-    output_token_amount - input_token_amount == incoming_supply - outgoing_supply
+fn validate_redeem(
+    app: &App,
+    tx: &Transaction,
+    yes_amount: u64,
+    no_amount: u64,
+) -> bool {
+    // TODO: Implement validation
+    true
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use charms_sdk::data::UtxoId;
+fn validate_cancel(
+    app: &App,
+    tx: &Transaction,
+    _witness: &[u8],
+) -> bool {
+    // TODO: Implement validation
+    true
+}
 
-    #[test]
-    fn dummy() {}
-
-    #[test]
-    fn test_hash() {
-        let utxo_id =
-            UtxoId::from_str("dc78b09d767c8565c4a58a95e7ad5ee22b28fc1685535056a395dc94929cdd5f:1")
-                .unwrap();
-        let data = dbg!(utxo_id.to_string());
-        let expected = "f54f6d40bd4ba808b188963ae5d72769ad5212dd1d29517ecc4063dd9f033faa";
-        assert_eq!(&hash(&data).to_string(), expected);
-    }
+fn validate_claim_fees(
+    app: &App,
+    tx: &Transaction,
+    witness: &[u8],
+) -> bool {
+    // TODO: Implement validation
+    true
 }
