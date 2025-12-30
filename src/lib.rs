@@ -576,7 +576,42 @@ fn validate_redeem(
     yes_amount: u64,
     no_amount: u64,
 ) -> bool {
-    // TODO: Implement validation
+    let state = match find_and_parse_market_state_input(app, tx) {
+        Some(s) => s,
+        None => return false,
+    };
+    
+    // Must be resolved
+    check!(state.status == MarketStatus::Resolved);
+    
+    let resolution = state.resolution.as_ref().unwrap();
+    
+    // Calculate expected payout
+    match resolution.outcome {
+        Outcome::Yes => {
+            // YES wins, must burn YES tokens
+            check!(no_amount == 0);
+        }
+        Outcome::No => {
+            // NO wins, must burn NO tokens
+            check!(yes_amount == 0);
+        }
+        Outcome::Invalid => {
+            // Must burn equal amounts
+            check!(yes_amount == no_amount);
+        }
+    }
+    
+    // Verify correct tokens are burned
+    let yes_app = derive_yes_token_app(&state.market_id, &app.vk);
+    let no_app = derive_no_token_app(&state.market_id, &app.vk);
+    
+    let yes_burned = count_token_burned(tx, &yes_app);
+    let no_burned = count_token_burned(tx, &no_app);
+    
+    check!(yes_burned == yes_amount);
+    check!(no_burned == no_amount);
+    
     true
 }
 
