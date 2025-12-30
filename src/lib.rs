@@ -265,7 +265,35 @@ fn validate_create(
     question_hash: &[u8; 32],
     params: &MarketParams,
 ) -> bool {
-    // TODO: Implement validation
+    // 1. Must have exactly one input (funding UTXO)
+    check!(tx.ins.len() == 1);
+    
+    // 2. Must have at least one output (market NFT)
+    check!(!tx.outs.is_empty());
+    
+    // 3. Market ID is derived from input UTXO
+    let market_id = sha256_utxo(&tx.ins[0].0);
+    
+    // 4. Verify market NFT is created with correct initial state
+    let nft_charms: Vec<_> = charm_values(app, tx.outs.iter()).collect();
+    check!(nft_charms.len() == 1);
+    
+    let state: MarketState = match nft_charms[0].value::<MarketState>() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    
+    // 5. Validate initial state
+    check!(state.market_id == market_id);
+    check!(state.question_hash == *question_hash);
+    check!(state.params.trading_deadline == params.trading_deadline);
+    check!(state.params.resolution_deadline == params.resolution_deadline);
+    check!(state.params.fee_bps == params.fee_bps);
+    check!(state.status == MarketStatus::Active);
+    check!(state.resolution.is_none());
+    check!(state.yes_supply == 0);
+    check!(state.no_supply == 0);
+    
     true
 }
 
