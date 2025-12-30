@@ -1033,3 +1033,6 @@ fn verify_creator_signature(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod integration_tests;
