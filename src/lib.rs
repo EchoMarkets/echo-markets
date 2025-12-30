@@ -350,7 +350,7 @@ fn validate_mint(
     check!(yes_minted == shares);
     check!(no_minted == shares);
     
-    // 7. All other state must remain unchanged
+    // 9. All other state must remain unchanged
     check!(new.market_id == old.market_id);
     check!(new.question_hash == old.question_hash);
     check!(new.params.trading_deadline == old.params.trading_deadline);
@@ -604,7 +604,7 @@ fn validate_redeem(
 fn validate_cancel(
     app: &App,
     tx: &Transaction,
-    _witness: &[u8],
+    witness: &[u8],
 ) -> bool {
     let old = match find_and_parse_market_state_input(app, tx) {
         Some(s) => s,
@@ -617,7 +617,7 @@ fn validate_cancel(
     
     // Only creator can cancel
     // Verify creator signature in witness
-    check!(verify_creator_signature(&old.creator, &old.market_id, _witness));
+    check!(verify_creator_signature(&old.creator, &old.market_id, witness));
     
     // Can't cancel already resolved market
     check!(old.status != MarketStatus::Resolved);
@@ -633,7 +633,45 @@ fn validate_claim_fees(
     tx: &Transaction,
     witness: &[u8],
 ) -> bool {
-    // TODO: Implement validation
+    let old = match find_and_parse_market_state_input(app, tx) {
+        Some(s) => s,
+        None => return false,
+    };
+    let new = match find_and_parse_market_state_output(app, tx) {
+        Some(s) => s,
+        None => return false,
+    };
+    
+    // 1. Market must be resolved
+    check!(old.status == MarketStatus::Resolved);
+    
+    // 2. Only creator can claim fees (verify signature)
+    check!(verify_creator_signature(&old.creator, &old.market_id, witness));
+    
+    // 3. Fees must be reset to 0 after claiming
+    check!(new.fees == 0);
+    
+    // 4. All other state must remain unchanged
+    check!(new.market_id == old.market_id);
+    check!(new.question_hash == old.question_hash);
+    check!(new.params.trading_deadline == old.params.trading_deadline);
+    check!(new.params.resolution_deadline == old.params.resolution_deadline);
+    check!(new.params.fee_bps == old.params.fee_bps);
+    check!(new.params.min_bet == old.params.min_bet);
+    check!(new.status == old.status); // Status remains Resolved
+    check!(new.resolution == old.resolution); // Resolution unchanged
+    check!(new.creator == old.creator);
+    check!(new.yes_supply == old.yes_supply);
+    check!(new.no_supply == old.no_supply);
+    check!(new.max_supply == old.max_supply);
+    
+    // 5. Verify fees were actually accumulated (old.fees > 0)
+    // This prevents claiming when there are no fees
+    check!(old.fees > 0);
+    
+    // Note: BTC withdrawal to creator is handled at the transaction level
+    // The transaction should output old.fees sats to the creator's address
+    
     true
 }
 
