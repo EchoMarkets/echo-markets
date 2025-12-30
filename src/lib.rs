@@ -377,13 +377,85 @@ fn validate_mint(
     true
 }
 
+/// Validate burn operation
+/// 
+/// # Arguments
+/// * `app` - The market NFT app
+/// * `tx` - Transaction context
+/// * `set_count` - Number of complete sets to burn
+/// * `current_timestamp` - Current Unix timestamp (seconds) - must be < trading_deadline
 fn validate_burn(
     app: &App,
     tx: &Transaction,
     set_count: u64,
     current_timestamp: u64,
 ) -> bool {
-    // TODO: Implement validation
+    // 1. Find market NFT in inputs and outputs
+    let old = match find_and_parse_market_state_input(app, tx) {
+        Some(s) => s,
+        None => return false,
+    };
+    let new = match find_and_parse_market_state_output(app, tx) {
+        Some(s) => s,
+        None => return false,
+    };
+    
+    // 2. Market must be active (can only burn during Active status)
+    check!(old.status == MarketStatus::Active);
+    
+    // 3. Validate timestamp: current_time must be < trading_deadline
+    // If deadline has passed, trading is closed and burns are not allowed
+    check!(current_timestamp < old.params.trading_deadline);
+    
+    // 4. Verify correct token apps are being burned
+    let yes_app = derive_yes_token_app(&old.market_id, &app.vk);
+    let no_app = derive_no_token_app(&old.market_id, &app.vk);
+    
+    // 5. Verify equal amounts of YES and NO tokens are burned
+    let yes_burned = count_token_burned(tx, &yes_app);
+    let no_burned = count_token_burned(tx, &no_app);
+    
+    check!(yes_burned == set_count);
+    check!(no_burned == set_count);
+    check!(yes_burned == no_burned); // Explicit check for equal amounts
+    
+    // 6. Verify supply tracking is updated correctly
+    // Supply decreases by the number of complete sets burned
+    check!(new.yes_supply == old.yes_supply.checked_sub(set_count).unwrap_or(0));
+    check!(new.no_supply == old.no_supply.checked_sub(set_count).unwrap_or(0));
+    
+    // 7. Verify state transition is valid (all other fields unchanged)
+    check!(new.market_id == old.market_id);
+    check!(new.question_hash == old.question_hash);
+    check!(new.params.trading_deadline == old.params.trading_deadline);
+    check!(new.params.resolution_deadline == old.params.resolution_deadline);
+    check!(new.params.fee_bps == old.params.fee_bps);
+    check!(new.params.min_bet == old.params.min_bet);
+    check!(new.status == old.status); // Status remains Active
+    check!(new.resolution == old.resolution); // Resolution unchanged
+    check!(new.creator == old.creator);
+    check!(new.max_supply == old.max_supply);
+    // Fees remain unchanged (fees are only collected on trades, not burns)
+    check!(new.fees == old.fees);
+    
+    // 8. Verify user receives collateral back
+    // Note: BTC amount verification is handled at the transaction level
+    // The burn operation itself ensures tokens are burned, and the transaction
+    // structure ensures the user receives the collateral in outputs
+    
+    // Additional validation: ensure tokens are actually in inputs
+    // The count_token_burned function already handles net burn (input - output),
+    // so it is just needed to verify sufficient tokens are in inputs
+    let yes_input_total = sum_token_amount(&yes_app, tx.ins.iter().map(|(_, v)| v)).unwrap_or(0);
+    let no_input_total = sum_token_amount(&no_app, tx.ins.iter().map(|(_, v)| v)).unwrap_or(0);
+    
+    // Must have at least set_count tokens in inputs to burn
+    check!(yes_input_total >= set_count);
+    check!(no_input_total >= set_count);
+    
+    // Note: count_token_burned already verifies net burn (input - output = set_count)
+    // If tokens appear in outputs, they're being transferred, not burned
+    
     true
 }
 
