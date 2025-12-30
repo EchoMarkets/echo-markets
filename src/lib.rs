@@ -297,13 +297,83 @@ fn validate_create(
     true
 }
 
+/// Validate mint operation
+/// 
+/// # Arguments
+/// * `app` - The market NFT app
+/// * `tx` - Transaction context
+/// * `collateral_amount` - Amount of collateral to deposit
+/// * `current_timestamp` - Current Unix timestamp (seconds) - must be < trading_deadline
 fn validate_mint(
     app: &App,
     tx: &Transaction,
     collateral_amount: u64,
     current_timestamp: u64,
 ) -> bool {
-    // TODO: Implement validation
+    // 1. Find market NFT in inputs and outputs
+    let old_state = find_and_parse_market_state_input(app, tx);
+    let new_state = find_and_parse_market_state_output(app, tx);
+    
+    check!(old_state.is_some());
+    check!(new_state.is_some());
+    
+    let old = old_state.unwrap();
+    let new = new_state.unwrap();
+    
+    // 2. Enforce min_bet limit to prevent dust attacks
+    // This ensures meaningful trades and prevents spam
+    check!(collateral_amount >= old.params.min_bet);
+    
+    // 3. Market must be active
+    check!(old.status == MarketStatus::Active);
+    
+    // 4. Validate timestamp: current_time must be < trading_deadline
+    // Mint operations are only allowed before the trading deadline
+    // After deadline, market should transition to TradingClosed
+    check!(current_timestamp < old.params.trading_deadline);
+    
+    // 5. Calculate fee and shares to mint
+    // Fee = collateral_amount * fee_bps / 10000 (basis points)
+    // Shares = collateral_amount - fee (user gets tokens for net collateral)
+    let fee = (collateral_amount as u128 * old.params.fee_bps as u128 / 10000) as u64;
+    let shares = collateral_amount.checked_sub(fee).unwrap_or(0);
+    
+    // 6. Verify supply increases correctly (shares minted, not full collateral)
+    check!(new.yes_supply == old.yes_supply + shares);
+    check!(new.no_supply == old.no_supply + shares);
+    
+    // 7. Enforce max_supply limit to prevent infinite minting
+    // This bounds the market size and prevents supply overflow
+    check!(new.yes_supply <= old.max_supply);
+    check!(new.no_supply <= old.max_supply);
+    
+    // 8. Verify YES and NO tokens minted in outputs
+    let yes_app = derive_yes_token_app(&old.market_id, &app.vk);
+    let no_app = derive_no_token_app(&old.market_id, &app.vk);
+    
+    let yes_minted = count_token_minted(tx, &yes_app);
+    let no_minted = count_token_minted(tx, &no_app);
+    
+    check!(yes_minted == shares);
+    check!(no_minted == shares);
+    
+    // 7. All other state must remain unchanged
+    check!(new.market_id == old.market_id);
+    check!(new.question_hash == old.question_hash);
+    check!(new.params.trading_deadline == old.params.trading_deadline);
+    check!(new.params.resolution_deadline == old.params.resolution_deadline);
+    check!(new.params.fee_bps == old.params.fee_bps);
+    check!(new.params.min_bet == old.params.min_bet);
+    check!(new.status == old.status);
+    check!(new.resolution == old.resolution);
+    check!(new.creator == old.creator);
+    
+    // 10. Verify max_supply remains unchanged
+    check!(new.max_supply == old.max_supply);
+    
+    // 11. Verify fees are accumulated correctly
+    check!(new.fees == old.fees + fee);
+    
     true
 }
 
