@@ -297,13 +297,6 @@ fn validate_create(
     true
 }
 
-/// Validate mint operation
-/// 
-/// # Arguments
-/// * `app` - The market NFT app
-/// * `tx` - Transaction context
-/// * `collateral_amount` - Amount of collateral to deposit
-/// * `current_timestamp` - Current Unix timestamp (seconds) - must be < trading_deadline
 fn validate_mint(
     app: &App,
     tx: &Transaction,
@@ -377,13 +370,6 @@ fn validate_mint(
     true
 }
 
-/// Validate burn operation
-/// 
-/// # Arguments
-/// * `app` - The market NFT app
-/// * `tx` - Transaction context
-/// * `set_count` - Number of complete sets to burn
-/// * `current_timestamp` - Current Unix timestamp (seconds) - must be < trading_deadline
 fn validate_burn(
     app: &App,
     tx: &Transaction,
