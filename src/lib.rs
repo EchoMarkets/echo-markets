@@ -620,7 +620,25 @@ fn validate_cancel(
     tx: &Transaction,
     _witness: &[u8],
 ) -> bool {
-    // TODO: Implement validation
+    let old = match find_and_parse_market_state_input(app, tx) {
+        Some(s) => s,
+        None => return false,
+    };
+    let new = match find_and_parse_market_state_output(app, tx) {
+        Some(s) => s,
+        None => return false,
+    };
+    
+    // Only creator can cancel
+    // Verify creator signature in witness
+    check!(verify_creator_signature(&old.creator, &old.market_id, _witness));
+    
+    // Can't cancel already resolved market
+    check!(old.status != MarketStatus::Resolved);
+    
+    check!(new.status == MarketStatus::Cancelled);
+    check!(new.resolution.as_ref().map(|r| r.outcome == Outcome::Invalid).unwrap_or(false));
+    
     true
 }
 
