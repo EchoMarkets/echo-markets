@@ -1,9 +1,75 @@
 //! Charms Echo Markets - Core Contract
 //! 
-//! This is a starter implementation for a decentralized prediction market
-//! running directly on Bitcoin via the Charms protocol.
-
-
+//! A decentralized prediction market running directly on Bitcoin via the Charms protocol.
+//! This contract enables users to create markets, trade YES/NO outcome tokens, resolve markets,
+//! and redeem winning positions - all on Bitcoin's base layer.
+//!
+//! # Prediction Market Design
+//!
+//! ## Overview
+//!
+//! The prediction market operates using a dual-token system:
+//! - **YES tokens**: Represent a bet that the outcome will be "Yes"
+//! - **NO tokens**: Represent a bet that the outcome will be "No"
+//!
+//! Users mint complete sets (1 YES + 1 NO) by depositing collateral. After market resolution,
+//! holders of winning tokens can redeem them for collateral, while losing tokens become worthless.
+//!
+//! ## Market Lifecycle
+//!
+//! ```text
+//! State Machine:
+//!
+//!     [Create]
+//!        |
+//!        v
+//!    [Active] <---> [TradingClosed] (after trading_deadline)
+//!        |                |
+//!        |                |
+//!        +---> [Resolved] <--+
+//!        |                   |
+//!        |                   |
+//!        v                   v
+//!    [Cancelled]        [Redeem]
+//! ```
+//!
+//! ### State Transitions
+//!
+//! 1. **Active**: Market is open for trading
+//!    - Users can mint/burn tokens
+//!    - Users can transfer tokens
+//!    - Market cannot be resolved yet
+//!
+//! 2. **TradingClosed**: Trading deadline has passed
+//!    - No new minting/burning allowed
+//!    - Token transfers still allowed
+//!    - Market can be resolved
+//!
+//! 3. **Resolved**: Market outcome has been determined
+//!    - No trading or transfers allowed
+//!    - Only redemption of winning tokens
+//!    - Fees can be claimed by creator
+//!
+//! 4. **Cancelled**: Market was cancelled by creator
+//!    - Only possible before resolution
+//!    - All tokens can be redeemed for refund
+//!
+//! ## Token Economics
+//!
+//! - **Minting**: User deposits `collateral`, pays `fee = collateral * fee_bps / 10000`,
+//!   receives `shares = collateral - fee` in YES + NO tokens
+//! - **Burning**: User burns equal YES + NO tokens, receives collateral back (minus fees already paid)
+//! - **Trading**: Users can transfer YES/NO tokens to each other (P2P trading)
+//! - **Redemption**: After resolution, winning token holders redeem 1:1 for collateral
+//!
+//! ## Market Parameters
+//!
+//! - `trading_deadline`: Unix timestamp when trading stops
+//! - `resolution_deadline`: Unix timestamp when resolution becomes available
+//! - `fee_bps`: Trading fee in basis points (100 = 1%)
+//! - `min_bet`: Minimum collateral required to mint tokens
+//! - `max_supply`: Maximum total supply of YES/NO tokens
+//!
 //! # Time Validation Approach
 //! 
 //! Charms runs in a zkVM on Bitcoin and doesn't provide direct access to block time or height.
@@ -201,14 +267,45 @@ pub enum MarketOperation {
 
 /// Main app contract predicate for Charms
 /// 
+/// This is the entry point for all market operations. It routes operations based on
+/// the app tag (NFT for market operations, TOKEN for token transfers) and validates
+/// the transaction according to the operation type.
+/// 
 /// # Arguments
-/// * `app` - The app being validated
-/// * `tx` - The transaction context
-/// * `x` - Public input data (operation)
-/// * `w` - Private witness data (signatures, etc.)
+/// 
+/// * `app` - The app being validated (NFT for market, TOKEN for YES/NO tokens)
+/// * `tx` - The transaction context (inputs and outputs)
+/// * `x` - Public input data containing the `MarketOperation`
+/// * `w` - Private witness data (signatures for cancellation, resolution, etc.)
 /// 
 /// # Returns
-/// * `true` if the transaction satisfies the contract
+/// 
+/// Returns `true` if the transaction satisfies all contract rules, `false` otherwise.
+/// 
+/// # Operation Types
+/// 
+/// ## NFT Tag Operations (Market Controller)
+/// 
+/// - `Create`: Initialize a new prediction market
+/// - `Mint`: Create YES/NO tokens by depositing collateral
+/// - `Burn`: Destroy YES/NO tokens to recover collateral
+/// - `Resolve`: Set the market outcome (YES/NO/Invalid)
+/// - `Redeem`: Exchange winning tokens for collateral
+/// - `Cancel`: Cancel market before resolution (creator only)
+/// - `ClaimFees`: Withdraw accumulated trading fees (creator only)
+/// 
+/// ## TOKEN Tag Operations (YES/NO Tokens)
+/// 
+/// - Token transfers between addresses (P2P trading)
+/// - Only allowed when market is Active or TradingClosed
+/// - Enforces token conservation (input == output)
+///  
+/// # Security
+/// 
+/// - All operations are validated against current market state
+/// - Timestamps are checked against deadlines
+/// - Signatures are verified for sensitive operations (cancel, resolve)
+/// - Token conservation is enforced for transfers
 pub fn app_contract(app: &App, tx: &Transaction, x: &Data, w: &Data) -> bool {
     // Market state is stored in an NFT, so market operations require NFT tag
     // Token operations (YES/NO tokens) use TOKEN tag
@@ -259,6 +356,37 @@ pub fn app_contract(app: &App, tx: &Transaction, x: &Data, w: &Data) -> bool {
 // VALIDATION FUNCTIONS
 // ========================================================================
 
+/// Validates market creation operation
+/// 
+/// Ensures a new market is created with correct initial state:
+/// - Exactly one input (funding UTXO)
+/// - Market NFT output with valid initial state
+/// - Market ID derived from input UTXO
+/// - All initial values set correctly (zero supply, Active status, etc.)
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - Transaction with creation inputs/outputs
+/// * `question_hash` - SHA256 hash of the market question
+/// * `params` - Market configuration parameters
+/// 
+/// # Returns
+/// 
+/// `true` if market creation is valid, `false` otherwise.
+/// 
+/// # Validation Rules
+/// 
+/// 1. Must have exactly one input (funding UTXO)
+/// 2. Must have at least one output (market NFT)
+/// 3. Market ID must match derived value from input UTXO
+/// 4. Initial state must have:
+///    - `status == Active`
+///    - `yes_supply == 0`
+///    - `no_supply == 0`
+///    - `fees == 0`
+///    - `resolution == None`
+///    - Parameters match provided values
 fn validate_create(
     app: &App,
     tx: &Transaction,
@@ -297,6 +425,34 @@ fn validate_create(
     true
 }
 
+/// Validates token minting operation
+/// 
+/// Allows users to mint YES/NO tokens by depositing collateral. A fee is deducted
+/// from the collateral, and the remaining amount is minted as tokens.
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - Transaction with mint inputs/outputs
+/// * `collateral_amount` - Amount of collateral deposited (in sats)
+/// * `current_timestamp` - Current Unix timestamp for deadline validation
+/// 
+/// # Returns
+/// 
+/// `true` if minting is valid, `false` otherwise.
+/// 
+/// # Validation Rules
+/// 
+/// 1. Market must be `Active`
+/// 2. `collateral_amount >= min_bet` (prevents dust attacks)
+/// 3. `current_timestamp < trading_deadline`
+/// 4. Fee calculation: `fee = collateral * fee_bps / 10000`
+/// 5. Shares minted: `shares = collateral - fee`
+/// 6. Supply increases: `new.yes_supply == old.yes_supply + shares`
+/// 7. `new.yes_supply <= max_supply` (prevents overflow)
+/// 8. Fees accumulated: `new.fees == old.fees + fee`
+/// 9. Equal YES and NO tokens minted
+/// 
 fn validate_mint(
     app: &App,
     tx: &Transaction,
@@ -370,6 +526,31 @@ fn validate_mint(
     true
 }
 
+/// Validates token burning operation
+/// 
+/// Allows users to burn equal amounts of YES/NO tokens to recover collateral.
+/// This is the inverse of minting - users get their collateral back (minus fees already paid).
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - Transaction with burn inputs/outputs
+/// * `set_count` - Number of complete sets (YES + NO pairs) to burn
+/// * `current_timestamp` - Current Unix timestamp for deadline validation
+/// 
+/// # Returns
+/// 
+/// `true` if burning is valid, `false` otherwise.
+/// 
+/// # Validation Rules
+/// 
+/// 1. Market must be `Active`
+/// 2. `current_timestamp < trading_deadline`
+/// 3. Equal YES and NO tokens must be burned
+/// 4. Supply decreases: `new.yes_supply == old.yes_supply - set_count`
+/// 5. Fees remain unchanged (fees are only collected on mint, not burn)
+/// 6. User receives collateral back in transaction outputs
+/// 
 fn validate_burn(
     app: &App,
     tx: &Transaction,
@@ -446,7 +627,32 @@ fn validate_burn(
 }
 
 
-/// Validate resolve operation
+/// Validates market resolution operation
+/// 
+/// Sets the final outcome of the market (YES/NO/Invalid) with cryptographic proof.
+/// Once resolved, the market enters the Resolved state and redemption becomes available.
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - Transaction with resolution inputs/outputs
+/// * `outcome` - The market outcome (Yes, No, or Invalid)
+/// * `proof` - Cryptographic proof of the outcome (signature or cross-chain proof)
+/// * `witness` - Witness data (unused for now, reserved for future use)
+/// * `current_timestamp` - Current Unix timestamp for deadline validation
+/// 
+/// # Returns
+/// 
+/// `true` if resolution is valid, `false` otherwise.
+/// 
+/// # Validation Rules
+/// 
+/// 1. Market must be `Active` or `TradingClosed` (not already resolved)
+/// 2. `current_timestamp >= resolution_deadline`
+/// 3. Resolution proof must be valid (signature verification)
+/// 4. State transitions to `Resolved`
+/// 5. Resolution data is stored with correct outcome and timestamp
+/// 6. Fees are preserved (can be claimed later)
 /// 
 /// # Resolution Deadlines
 /// 
@@ -461,6 +667,7 @@ fn validate_burn(
 /// - Resolution can be challenged (future implementation)
 /// - Redeem operations are allowed
 /// - Market status remains Resolved
+/// 
 fn validate_resolve(
     app: &App,
     tx: &Transaction,
@@ -556,6 +763,33 @@ fn validate_resolve(
     true
 }
 
+/// Validates token redemption operation
+/// 
+/// Allows holders of winning tokens to redeem them for collateral after market resolution.
+/// The redemption amount depends on the market outcome:
+/// - YES outcome: Redeem YES tokens only
+/// - NO outcome: Redeem NO tokens only
+/// - Invalid outcome: Redeem equal amounts of YES + NO (refund)
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - Transaction with redemption inputs/outputs
+/// * `yes_amount` - Amount of YES tokens to redeem
+/// * `no_amount` - Amount of NO tokens to redeem
+/// 
+/// # Returns
+/// 
+/// `true` if redemption is valid, `false` otherwise.
+/// 
+/// # Validation Rules
+/// 
+/// 1. Market must be `Resolved`
+/// 2. For YES outcome: `no_amount == 0`, only YES tokens redeemed
+/// 3. For NO outcome: `yes_amount == 0`, only NO tokens redeemed
+/// 4. For Invalid outcome: `yes_amount == no_amount` (equal refund)
+/// 5. Correct tokens are burned in transaction
+///
 fn validate_redeem(
     app: &App,
     tx: &Transaction,
@@ -601,6 +835,33 @@ fn validate_redeem(
     true
 }
 
+/// Validates market cancellation operation
+/// 
+/// Allows the market creator to cancel the market before resolution.
+/// Cancelled markets transition to Invalid outcome, allowing all token holders to redeem.
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - Transaction with cancellation inputs/outputs
+/// * `witness` - Witness data containing creator's Schnorr signature
+/// 
+/// # Returns
+/// 
+/// `true` if cancellation is valid, `false` otherwise.
+/// 
+/// # Validation Rules
+/// 
+/// 1. Creator signature must be valid (message: `SHA256("CANCEL" || market_id)`)
+/// 2. Market must not be `Resolved` (cannot cancel after resolution)
+/// 3. State transitions to `Cancelled`
+/// 4. Resolution set to `Invalid` outcome
+/// 
+/// # Security
+/// 
+/// Only the market creator can cancel, verified via Schnorr signature.
+/// The signature is over a specific message format to prevent replay attacks.
+/// 
 fn validate_cancel(
     app: &App,
     tx: &Transaction,
@@ -628,6 +889,29 @@ fn validate_cancel(
     true
 }
 
+/// Validates fee claiming operation
+/// 
+/// Allows the market creator to withdraw accumulated trading fees after market resolution.
+/// Fees are collected on every mint operation and accumulated in the market state.
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - Transaction with fee claim inputs/outputs
+/// * `witness` - Witness data containing creator's Schnorr signature
+/// 
+/// # Returns
+/// 
+/// `true` if fee claiming is valid, `false` otherwise.
+/// 
+/// # Validation Rules
+/// 
+/// 1. Market must be `Resolved`
+/// 2. Creator signature must be valid
+/// 3. `old.fees > 0` (fees must exist to claim)
+/// 4. `new.fees == 0` (fees reset after claiming)
+/// 5. All other state remains unchanged
+///
 fn validate_claim_fees(
     app: &App,
     tx: &Transaction,
@@ -685,11 +969,37 @@ fn sha256_utxo(utxo_id: &UtxoId) -> [u8; 32] {
     sha256(utxo_str.as_bytes())
 }
 
+/// Computes SHA256 hash of input data
+/// 
+/// # Arguments
+/// 
+/// * `data` - Input bytes to hash
+/// 
+/// # Returns
+/// 
+/// A 32-byte array containing the SHA256 hash.
 fn sha256(data: &[u8]) -> [u8; 32] {
     let hash = Sha256::digest(data);
     hash.into()
 }
 
+/// Derives the YES token app identity from market ID
+/// 
+/// YES tokens have a deterministic identity based on the market ID,
+/// allowing the contract to identify and validate YES token operations.
+/// 
+/// # Arguments
+/// 
+/// * `market_id` - The unique market identifier
+/// * `vk` - The verification key for the app
+/// 
+/// # Returns
+/// 
+/// An `App` struct with TOKEN tag and derived identity.
+/// 
+/// # Identity Derivation
+/// 
+/// The identity is computed as: `SHA256(market_id || "YES")`
 fn derive_yes_token_app(market_id: &[u8; 32], vk: &B32) -> App {
     let mut identity_data = market_id.to_vec();
     identity_data.extend(b"YES");
@@ -702,6 +1012,23 @@ fn derive_yes_token_app(market_id: &[u8; 32], vk: &B32) -> App {
     }
 }
 
+/// Derives the NO token app identity from market ID
+/// 
+/// NO tokens have a deterministic identity based on the market ID,
+/// allowing the contract to identify and validate NO token operations.
+/// 
+/// # Arguments
+/// 
+/// * `market_id` - The unique market identifier
+/// * `vk` - The verification key for the app
+/// 
+/// # Returns
+/// 
+/// An `App` struct with TOKEN tag and derived identity.
+/// 
+/// # Identity Derivation
+/// 
+/// The identity is computed as: `SHA256(market_id || "NO")`
 fn derive_no_token_app(market_id: &[u8; 32], vk: &B32) -> App {
     let mut identity_data = market_id.to_vec();
     identity_data.extend(b"NO");
@@ -714,6 +1041,19 @@ fn derive_no_token_app(market_id: &[u8; 32], vk: &B32) -> App {
     }
 }
 
+/// Finds and parses market state from transaction inputs
+/// 
+/// Searches transaction inputs for the market NFT and extracts the `MarketState`.
+/// Used to get the current market state before an operation.
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - The transaction to search
+/// 
+/// # Returns
+/// 
+/// `Some(MarketState)` if found, `None` otherwise.
 fn find_and_parse_market_state_input(app: &App, tx: &Transaction) -> Option<MarketState> {
     charm_values(app, tx.ins.iter().map(|(_, v)| v))
         .find_map(|data| {
@@ -721,6 +1061,19 @@ fn find_and_parse_market_state_input(app: &App, tx: &Transaction) -> Option<Mark
         })
 }
 
+/// Finds and parses market state from transaction outputs
+/// 
+/// Searches transaction outputs for the market NFT and extracts the `MarketState`.
+/// Used to get the new market state after an operation.
+/// 
+/// # Arguments
+/// 
+/// * `app` - The NFT app (market controller)
+/// * `tx` - The transaction to search
+/// 
+/// # Returns
+/// 
+/// `Some(MarketState)` if found, `None` otherwise.
 fn find_and_parse_market_state_output(app: &App, tx: &Transaction) -> Option<MarketState> {
     charm_values(app, tx.outs.iter())
         .find_map(|data| {
@@ -728,6 +1081,19 @@ fn find_and_parse_market_state_output(app: &App, tx: &Transaction) -> Option<Mar
         })
 }
 
+/// Counts the net amount of tokens minted in a transaction
+/// 
+/// Calculates the difference between output and input token amounts.
+/// Positive values indicate minting, zero indicates no change.
+/// 
+/// # Arguments
+/// 
+/// * `tx` - The transaction to analyze
+/// * `token_app` - The token app (YES or NO)
+/// 
+/// # Returns
+/// 
+/// The net number of tokens minted (output - input).
 fn count_token_minted(tx: &Transaction, token_app: &App) -> u64 {
     let output_total = sum_token_amount(token_app, tx.outs.iter()).unwrap_or(0);
     let input_total = sum_token_amount(token_app, tx.ins.iter().map(|(_, v)| v)).unwrap_or(0);
@@ -735,6 +1101,19 @@ fn count_token_minted(tx: &Transaction, token_app: &App) -> u64 {
     output_total.saturating_sub(input_total)
 }
 
+/// Counts the net amount of tokens burned in a transaction
+/// 
+/// Calculates the difference between input and output token amounts.
+/// Positive values indicate burning, zero indicates no change.
+/// 
+/// # Arguments
+/// 
+/// * `tx` - The transaction to analyze
+/// * `token_app` - The token app (YES or NO)
+/// 
+/// # Returns
+/// 
+/// The net number of tokens burned (input - output).
 fn count_token_burned(tx: &Transaction, token_app: &App) -> u64 {
     let input_total = sum_token_amount(token_app, tx.ins.iter().map(|(_, v)| v)).unwrap_or(0);
     let output_total = sum_token_amount(token_app, tx.outs.iter()).unwrap_or(0);
@@ -742,14 +1121,35 @@ fn count_token_burned(tx: &Transaction, token_app: &App) -> u64 {
     input_total.saturating_sub(output_total)
 }
 
-/// Validate YES/NO token transfers
+/// Validates YES/NO token transfer operations
 /// 
-/// Requirements:
-/// 1. Allow transfers of YES and NO tokens between addresses
-/// 2. Ensure token conservation (input amount == output amount)
-/// 3. Prevent minting tokens without going through the Mint operation
-/// 4. Tokens can only be transferred if market is Active or TradingClosed
-/// 5. After resolution, tokens can only be redeemed (not transferred)
+/// Enforces rules for P2P trading of YES/NO tokens between users.
+/// This enables secondary market trading without going through the market contract.
+/// 
+/// # Arguments
+/// 
+/// * `token_app` - The TOKEN app (YES or NO token)
+/// * `tx` - Transaction with token transfer inputs/outputs
+/// 
+/// # Returns
+/// 
+/// `true` if transfer is valid, `false` otherwise.
+/// 
+/// # Validation Rules
+/// 
+/// 1. Market must be `Active` or `TradingClosed` (no transfers after resolution)
+/// 2. Token identity must match derived YES/NO token for the market
+/// 3. Token conservation: `input_total == output_total` (no minting/burning)
+/// 4. Market NFT must be present in transaction to verify market status
+/// 
+/// # Requirements
+/// 
+/// - Allow transfers of YES and NO tokens between addresses
+/// - Ensure token conservation (input amount == output amount)
+/// - Prevent minting tokens without going through the Mint operation
+/// - Tokens can only be transferred if market is Active or TradingClosed
+/// - After resolution, tokens can only be redeemed (not transferred)
+///
 fn validate_token_transfer(token_app: &App, tx: &Transaction) -> bool {
     // Find the market NFT that this token belongs to
     // Find a market NFT with the same vk, then derive token apps from it
@@ -780,23 +1180,33 @@ fn validate_token_transfer(token_app: &App, tx: &Transaction) -> bool {
     true
 }
 
-/// Find the market state for a given token app
+/// Finds the market state associated with a token app
 /// 
-/// Searches transaction inputs/outputs for market NFTs with the same vk,
-/// then verifies the token belongs to that market by deriving YES/NO token apps.
+/// When validating token transfers, we need to find the market NFT to check
+/// the market status. This function searches transaction inputs/outputs for
+/// market NFTs and verifies the token belongs to that market.
 /// 
-/// Note: This requires the market NFT to be present in the transaction
-/// (either as input or output) to verify market status. The market NFT must
-/// have the same vk as the token app.
+/// # Arguments
 /// 
-/// Strategy: Try to find the market NFT identity by:
-/// 1. Constructing a market NFT app with the same vk (but unknown identity)
-/// 2. Using charm_values to search for MarketState in transaction data
-/// 3. Verifying the found MarketState matches our token by deriving YES/NO apps
+/// * `token_app` - The token app (YES or NO token)
+/// * `tx` - The transaction to search
 /// 
-/// Charm_values requires a specific app identity.
-/// Try to extract MarketState by attempting to deserialize transaction
-/// data directly, or by trying common market NFT identity patterns.
+/// # Returns
+/// 
+/// `Some(MarketState)` if the market is found and token matches, `None` otherwise.
+/// 
+/// # Strategy
+/// 
+/// 1. Construct an NFT app with the same vk as the token (dummy identity)
+/// 2. Search transaction inputs/outputs for MarketState data
+/// 3. Verify the found MarketState matches by deriving YES/NO token identities
+/// 4. Return the matching MarketState
+/// 
+/// # Note
+/// 
+/// This requires the market NFT to be present in the transaction (either as
+/// input or output) to verify market status. The market NFT must have the
+/// same vk as the token app.
 fn find_market_state_for_token(token_app: &App, tx: &Transaction) -> Option<MarketState> {
     // Need to find market NFTs with the same vk as the token app
     // The challenge: Not knowing the market NFT identity
@@ -865,6 +1275,37 @@ fn find_market_state_for_token(token_app: &App, tx: &Transaction) -> Option<Mark
     None
 }
 
+/// Verifies Schnorr signature for market resolution
+/// 
+/// Validates that a resolver has cryptographically signed the market outcome.
+/// The signature is over a message containing the market ID and outcome.
+/// 
+/// # Arguments
+/// 
+/// * `market_id` - Unique market identifier
+/// * `outcome` - The market outcome being attested
+/// * `pubkey` - Resolver's compressed public key (33 bytes)
+/// * `signature` - Schnorr signature (64 bytes: r || s)
+/// 
+/// # Returns
+/// 
+/// `true` if signature is valid, `false` otherwise.
+/// 
+/// # Message Format
+/// 
+/// The message signed is: `SHA256(market_id || outcome_serialized)`
+/// 
+/// # Security
+/// 
+/// Uses `k256` crate for WASM-compatible Schnorr signature verification.
+/// The public key is converted from compressed format (33 bytes) to x-only format (32 bytes).
+/// 
+/// # Examples
+/// 
+/// ```ignore
+/// // Resolver signs: SHA256(market_id || Outcome::Yes)
+/// // Signature verified against resolver's public key
+/// ```
 fn verify_resolution_signature(
     market_id: &[u8; 32],
     outcome: &Outcome,
@@ -907,25 +1348,50 @@ fn verify_resolution_signature(
     verifying_key.verify(&message[..], &sig).is_ok()
 }
 
-/// Verify Cardano cross-chain oracle proof
+/// Verifies Cardano cross-chain oracle proof
+///
+/// Validates market resolution based on data from the Cardano blockchain.
+/// This enables markets to resolve based on events on other chains.
+///
+/// # Arguments
+///
+/// * `market_id` - Unique market identifier
+/// * `outcome` - The market outcome from Cardano
+/// * `tx_hash` - Cardano transaction hash containing outcome
+/// * `block_hash` - Cardano block hash
+/// * `merkle_proof` - Merkle proof path (for full implementation)
+/// * `oracle_pubkey` - Trusted oracle's public key
+/// * `oracle_signature` - Oracle's signature attesting to the data
+///
+/// # Returns
+///
+/// `true` if proof is valid, `false` otherwise.
 ///
 /// # Hackathon MVP Implementation
-/// Use trusted oracle signature verification:
-/// - Oracle signs: SHA256(market_id || outcome || tx_hash || block_hash)
+///
+/// Uses trusted oracle signature verification:
+/// - Oracle signs: `SHA256(market_id || outcome || tx_hash || block_hash)`
 /// - Verifies oracle's Schnorr signature
 /// - Trusts oracle's attestation of Cardano data
 /// 
 /// This is secure if oracle is trusted, but full implementation would remove
 /// the need for a trusted oracle by directly verifying Cardano chain data.
-
+///
 /// # Full Implementation (Future)
+///
 /// A complete implementation would:
-/// 1. Verify tx_hash exists in block via merkle_proof
-/// 
+/// 1. Verify `tx_hash` exists in block via `merkle_proof`
 /// 2. Verify transaction contains outcome data
-/// 
-/// 3. Verify block_hash is from valid Cardano block
-/// 
+/// 3. Verify `block_hash` is from valid Cardano block
+/// 4. Verify merkle path is correct
+///
+/// This requires Cardano light client logic (not implemented in MVP).
+///
+/// # Security Considerations
+///
+/// - MVP relies on trusted oracle (single point of failure)
+/// - Full implementation would be trustless via light client verification
+/// - Oracle key compromise would allow false resolutions
 fn verify_cardano_proof(
     market_id: &[u8; 32],
     outcome: &Outcome,
@@ -982,6 +1448,41 @@ fn verify_cardano_proof(
     
 }
 
+/// Verifies creator's Schnorr signature for sensitive operations
+/// 
+/// Used for operations that require creator authorization:
+/// - Market cancellation
+/// - Fee claiming
+/// 
+/// # Arguments
+/// 
+/// * `creator` - Market creator's compressed public key (33 bytes)
+/// * `market_id` - Unique market identifier
+/// * `witness` - Witness data containing signature (first 64 bytes)
+/// 
+/// # Returns
+/// 
+/// `true` if signature is valid, `false` otherwise.
+/// 
+/// # Message Format
+/// 
+/// The message signed is: `SHA256("CANCEL" || market_id)` for cancellation,
+/// or similar format for other creator-only operations.
+/// 
+/// # Security
+/// 
+/// - Signature prevents unauthorized cancellation/fee claims
+/// - Message format prevents replay attacks across different markets
+/// - Uses Schnorr signatures for WASM compatibility
+/// 
+/// # Examples
+/// 
+/// ```ignore
+/// // Creator signs cancellation
+/// let message = sha256(b"CANCEL" || market_id);
+/// let signature = sign(message, creator_privkey);
+/// // Include in witness: [signature_bytes...]
+/// ```
 fn verify_creator_signature(
     creator: &[u8; 33],
     market_id: &[u8; 32],
