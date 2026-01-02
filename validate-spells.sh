@@ -146,13 +146,13 @@ validate_spell() {
         return 1
     fi
     
-    # Validate YAML syntax (if yq or python is available)
-    if command -v python3 &> /dev/null; then
-        if ! echo "$substituted" | python3 -c "import sys, yaml; yaml.safe_load(sys.stdin)" 2>/dev/null; then
-            echo -e "${RED}INVALID YAML${NC}"
-            return 1
-        fi
+    # Validate YAML syntax (only if pyyaml is available)
+    if python3 -c "import yaml" 2>/dev/null; then
+    if ! echo "$substituted" | python3 -c "import sys, yaml; yaml.safe_load(sys.stdin)" 2>/dev/null; then
+        echo -e "${RED}INVALID YAML${NC}"
+        return 1
     fi
+fi
     
     echo -e "${GREEN}OK${NC}"
     return 0
