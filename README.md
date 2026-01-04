@@ -326,7 +326,6 @@ echo-markets/
 │   └── claim-fees.yaml
 ├── test-spells.sh          # Spell testing script
 ├── validate-spells.sh      # Simple spell validation
-├── TESTING.md              # Testing documentation
 ├── Cargo.toml              # Rust dependencies
 └── README.md               # This file
 ```
