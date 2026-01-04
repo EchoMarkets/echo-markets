@@ -397,4 +397,3 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 ## Acknowledgments
 
 - Built with [Charms](https://charms.dev) protocol for the [The BOS Hackathon](https://www.encodeclub.com/programmes/enchanting-utxo-bitcoin-smart-contracts-by-bitcoinos) - Building Bitcoin Smart Contracts with the BitcoinOS Stack
-- Uses [k256](https://github.com/RustCrypto/elliptic-curves) for cryptographic operations
