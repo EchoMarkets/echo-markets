@@ -52,12 +52,12 @@ export cancel_signature="0000000000000000000000000000000000000000000000000000000
 export creator_cancel_signature="${cancel_signature}"
 export creator_signature="${cancel_signature}"
 
-export addr_0="tb1qtest0"
-export addr_market="tb1qmarket"
-export addr_user="tb1quser"
-export addr_creator="tb1qcreator"
-export addr_alice="tb1qalice"
-export addr_bob="tb1qbob"
+export addr_0="tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c"
+export addr_market="tb1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcwrs20vcsfgtyxqkmqarqy9y2n"
+export addr_user="tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c"
+export addr_creator="tb1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcwrs20vcsfgtyxqkmqarqy9y2n"
+export addr_alice="tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c"
+export addr_bob="tb1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcwrs20vcsfgtyxqkmqarqy9y2n"
 
 export current_timestamp=1735500000
 export resolution_timestamp=${current_timestamp}
