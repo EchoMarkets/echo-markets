@@ -267,8 +267,6 @@ The project includes comprehensive spell testing scripts:
 ./validate-spells.sh
 ```
 
-For detailed testing instructions, see [TESTING.md](./TESTING.md).
-
 ## Documentation
 
 ### Generating API Documentation
