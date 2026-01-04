@@ -1,3 +1,4 @@
 /target
 /elf
 .DS_Store
+venv/
