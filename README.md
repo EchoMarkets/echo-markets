@@ -269,6 +269,25 @@ The project includes comprehensive spell testing scripts:
 
 For detailed testing instructions, see [TESTING.md](./TESTING.md).
 
+## Documentation
+
+### Generating API Documentation
+
+Generate HTML documentation from the Rust code:
+
+```bash
+# Generate documentation
+cargo doc
+
+# Generate and open in browser
+cargo doc --open
+
+# Generate docs without dependencies (faster)
+cargo doc --no-deps
+```
+
+The documentation will be available at `target/doc/echo_markets/index.html` and includes all doc comments from the source code.
+
 ## Project Structure
 
 ```
