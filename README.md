@@ -334,8 +334,6 @@ echo-markets/
 
 ### Time Validation
 
-Charms runs in a zkVM on Bitcoin and doesn't provide direct access to block time. The contract uses a hybrid approach:
-
 1. **Primary Enforcement**: Scrolls enforces trading deadlines at the transaction layer
 2. **Contract Validation**: Timestamp passed in operation data is validated by the contract
 3. **Defense-in-Depth**: Both layers provide security
