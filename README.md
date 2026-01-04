@@ -1,6 +1,6 @@
 # Echo Markets
 
-A decentralized prediction market running directly on Bitcoin via the [Charms](https://charms.dev) protocol. Create markets, trade YES/NO outcome tokens, resolve markets, and redeem winning positions - all on Bitcoin's base layer without requiring sidechains or trusted intermediaries.
+A decentralized prediction market running directly on Bitcoin via the [Charms](https://charms.dev) protocol. Create/resolve/cancel markets, mint/trade/burn YES/NO outcome tokens, claim fees, and redeem winning positions - all on Bitcoin's base layer without requiring sidechains or trusted intermediaries.
 
 ## Overview
 
