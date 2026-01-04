@@ -342,7 +342,7 @@ echo-markets/
 
 - **Resolution Signatures**: Uses Schnorr signatures (k256) for WASM compatibility
 - **Creator Signatures**: Market creator can cancel markets with valid signature
-- **Oracle Proofs**: Cross-chain oracle verification (simplified trusted oracle for MVP)
+- **Oracle Proofs**: Cross-chain oracle verification (simplified trusted oracle for Hackathon MVP)
 
 ### Supply Limits
 
