@@ -409,7 +409,7 @@ fn validate_create(
     params: &MarketParams,
 ) -> bool {
     let computed_market_id = sha256_utxo(&tx.ins[0].0);
-    /* 
+    
     // 1. Must have exactly one input (funding UTXO)
     check!(tx.ins.len() == 1);
     
@@ -428,17 +428,19 @@ fn validate_create(
         Err(_) => return false,
     };
     
-    // 5. Validate initial state
+    // 5. Validate initial state (prevent forged fees/supply/status)
     check!(state.market_id == market_id);
     check!(state.question_hash == *question_hash);
     check!(state.params.trading_deadline == params.trading_deadline);
     check!(state.params.resolution_deadline == params.resolution_deadline);
     check!(state.params.fee_bps == params.fee_bps);
+    check!(state.params.min_bet == params.min_bet);
     check!(state.status == MarketStatus::Active);
     check!(state.resolution.is_none());
     check!(state.yes_supply == 0);
-    check!(state.no_supply == 0); */
-    
+    check!(state.no_supply == 0);
+    check!(state.fees == 0);
+
     true
 }
 
