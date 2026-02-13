@@ -6,7 +6,7 @@
 # After resolution:
 # - If YES won: burn YES tokens only, receive 1 sat per token
 # - If NO won: burn NO tokens only, receive 1 sat per token
-# - If Invalid: burn equal YES and NO, receive 1 sat per pair
+# - If Invalid: burn any YES and/or NO, receive 0.5 sat per token each (no pair required)
 #
 # The market NFT remains in outputs (unchanged) to allow other users to redeem.
 # Tokens are burned (appear in inputs but not in outputs).
@@ -18,9 +18,10 @@
 #   # For NO outcome:
 #   export yes_tokens_burned=0
 #   export no_tokens_burned=1000000
-#   # For Invalid outcome (refund):
+#   # For Invalid outcome (refund; can redeem YES only, NO only, or both):
 #   export yes_tokens_burned=500000
 #   export no_tokens_burned=500000
+#   # Or e.g. YES only: yes_tokens_burned=1000000, no_tokens_burned=0
 #   cat redeem.yaml | envsubst | charms spell check --app-bins=${app_bin}
 # =============================================================================
 
