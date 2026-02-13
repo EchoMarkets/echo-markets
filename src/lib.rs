@@ -471,7 +471,8 @@ fn validate_create(
 /// 7. `new.yes_supply <= max_supply` (prevents overflow)
 /// 8. Fees accumulated: `new.fees == old.fees + fee`
 /// 9. Equal YES and NO tokens minted
-/// 
+/// 10. **Native BTC check**: sum(coin_ins) >= sum(coin_outs) + collateral_amount (prevents free minting)
+///
 fn validate_mint(
     app: &App,
     tx: &Transaction,
@@ -491,6 +492,18 @@ fn validate_mint(
     // 2. Enforce min_bet limit to prevent dust attacks
     // This ensures meaningful trades and prevents spam
     check!(collateral_amount >= old.params.min_bet);
+    
+    // 2b. Verify native BTC: inputs must exceed outputs by at least collateral_amount (anti free-mint)
+    // Without this, a user could claim 1 BTC collateral and get tokens while attaching 0 sats.
+    let btc_in: u64 = match tx.coin_ins.as_ref() {
+        Some(ins) => ins.iter().map(|o| o.amount).sum(),
+        None => return false,
+    };
+    let btc_out: u64 = match tx.coin_outs.as_ref() {
+        Some(outs) => outs.iter().map(|o| o.amount).sum(),
+        None => return false,
+    };
+    check!(btc_in >= btc_out.saturating_add(collateral_amount));
     
     // 3. Market must be active
     check!(old.status == MarketStatus::Active);
@@ -786,9 +799,12 @@ fn validate_resolve(
 /// 
 /// Allows holders of winning tokens to redeem them for collateral after market resolution.
 /// The redemption amount depends on the market outcome:
-/// - YES outcome: Redeem YES tokens only
-/// - NO outcome: Redeem NO tokens only
-/// - Invalid outcome: Redeem equal amounts of YES + NO (refund)
+/// - YES outcome: Redeem YES tokens only (1 sat per token)
+/// - NO outcome: Redeem NO tokens only (1 sat per token)
+/// - Invalid outcome: Redeem any YES and/or NO tokens (0.5 sat per token each)
+/// 
+/// For Invalid, users who hold only YES or only NO can still get a refund without
+/// needing to acquire the other side; each token redeems for half the collateral.
 /// 
 /// # Arguments
 /// 
@@ -806,7 +822,7 @@ fn validate_resolve(
 /// 1. Market must be `Resolved`
 /// 2. For YES outcome: `no_amount == 0`, only YES tokens redeemed
 /// 3. For NO outcome: `yes_amount == 0`, only NO tokens redeemed
-/// 4. For Invalid outcome: `yes_amount == no_amount` (equal refund)
+/// 4. For Invalid outcome: any `yes_amount` and/or `no_amount` (0.5 sat per token each)
 /// 5. Correct tokens are burned in transaction
 ///
 fn validate_redeem(
@@ -836,8 +852,8 @@ fn validate_redeem(
             check!(yes_amount == 0);
         }
         Outcome::Invalid => {
-            // Must burn equal amounts
-            check!(yes_amount == no_amount);
+            // Any YES and/or NO can be redeemed; 0.5 sat per token (no pair required).
+            // Users who only hold YES or only NO get a fair refund without buying the other side.
         }
     }
     
@@ -1237,72 +1253,29 @@ fn validate_token_transfer(token_app: &App, tx: &Transaction) -> bool {
 /// 
 /// This requires the market NFT to be present in the transaction (either as
 /// input or output) to verify market status. The market NFT must have the
-/// same vk as the token app.
+/// same vk as the token app. We iterate all NFT charms (same vk) in the tx
+/// because we cannot derive market_id from the token app identity.
 fn find_market_state_for_token(token_app: &App, tx: &Transaction) -> Option<MarketState> {
-    // Need to find market NFTs with the same vk as the token app
-    // The challenge: Not knowing the market NFT identity
-    
-    // Approach: Try to find MarketState by constructing NFT apps and using charm_values
-    // Since we don't know the identity, we'll try a few strategies:
-    
-    // Search inputs: try to find MarketState in any input data
-    // We'll construct an NFT app with matching vk and try different approaches
-
-    // Strategy 1: Try to find MarketState by iterating through inputs/outputs
-    // and using charm_values with a constructed NFT app
-    // Note: This won't work perfectly because charm_values filters by identity,
-    // but we can try with a dummy identity to see if it finds anything
-    let nft_app = App {
-        tag: NFT,
-        identity: B32([0u8; 32]), // Dummy identity
-        vk: token_app.vk.clone(),
-    };
-    
-    // Try using charm_values on inputs 
-    let input_charms: Vec<_> = charm_values(&nft_app, tx.ins.iter().map(|(_, v)| v)).collect();
-    for charm_data in input_charms {
-        if let Ok(state) = charm_data.value::<MarketState>() {
-            // Verify this token belongs to this market
+    // Iterate every charm in inputs and outputs. We cannot use charm_values(app, ...)
+    // with a single app because we don't know the market NFT identity (market_id).
+    // So we scan all (App, Data) where App is NFT with same vk, then parse MarketState
+    // and check if this token is that market's YES or NO.
+    let all_charms = tx.ins.iter().map(|(_, charms)| charms).chain(tx.outs.iter());
+    for charms in all_charms {
+        for (app, data) in charms.iter() {
+            if app.tag != NFT || app.vk != token_app.vk {
+                continue;
+            }
+            let Ok(state) = data.value::<MarketState>() else {
+                continue;
+            };
             let yes_app = derive_yes_token_app(&state.market_id, &token_app.vk);
             let no_app = derive_no_token_app(&state.market_id, &token_app.vk);
-            
             if token_app.identity == yes_app.identity || token_app.identity == no_app.identity {
                 return Some(state);
             }
         }
     }
-    
-    // Try using charm_values on outputs
-    let output_charms: Vec<_> = charm_values(&nft_app, tx.outs.iter()).collect();
-    for charm_data in output_charms {
-        if let Ok(state) = charm_data.value::<MarketState>() {
-            // Verify this token belongs to this market
-            let yes_app = derive_yes_token_app(&state.market_id, &token_app.vk);
-            let no_app = derive_no_token_app(&state.market_id, &token_app.vk);
-            
-            if token_app.identity == yes_app.identity || token_app.identity == no_app.identity {
-                return Some(state);
-            }
-        }
-    }
-    
-    // Strategy 2: For now, we'll require that token transfers include the market NFT
-    // and we'll find it by trying to construct the market NFT app from the market_id
-    // But we don't know the market_id from the token app alone...
-    
-    // Strategy 3: Try all possible market NFT apps by iterating through transaction data
-    // and checking if any NFT contains MarketState that matches our token
-
-    // If charm_values with dummy identity doesn't work, we can't find the market
-
-    // This means token transfers must include the market NFT with a known identity
-    // For Hackathon MVP, use a simplified approach:
-    // Try to find MarketState by attempting to deserialize from transaction data
-    // This works if MarketState is stored in a way that's directly accessible
-
-    // For now, return None - the validation will fail, which is correct behavior
-    // if the market NFT is not present
-    
     None
 }
 
