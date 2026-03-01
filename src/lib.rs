@@ -402,10 +402,7 @@ fn validate_create(
     // 2. Must have at least one output (market NFT)
     check!(!tx.outs.is_empty());
     
-    // 3. Market ID is derived from input UTXO
-    let market_id = sha256_utxo(&tx.ins[0].0);
-    
-    // 4. Verify market NFT is created with correct initial state
+    // 3. Verify market NFT is created with correct initial state
     let nft_charms: Vec<_> = charm_values(app, tx.outs.iter()).collect();
     check!(nft_charms.len() == 1);
     
@@ -414,8 +411,8 @@ fn validate_create(
         Err(_) => return false,
     };
     
-    // 5. Validate initial state (prevent forged fees/supply/status)
-    check!(state.market_id == market_id);
+    // 4. Validate initial state (prevent forged fees/supply/status)
+    check!(state.market_id == computed_market_id);
     check!(state.question_hash == *question_hash);
     check!(state.params.trading_deadline == params.trading_deadline);
     check!(state.params.resolution_deadline == params.resolution_deadline);
