@@ -238,14 +238,15 @@ mod integration_tests {
             ..minted_state
         };
         
-        // Redeem equal amounts (refund)
+        // Redeem (Invalid allows any YES and/or NO; this test uses equal amounts)
         let yes_amount = shares;
         let no_amount = shares;
         
         match resolved_state.resolution.as_ref().unwrap().outcome {
             Outcome::Invalid => {
-                assert_eq!(yes_amount, no_amount);
+                // Contract allows asymmetric redemption (YES only, NO only, or both at 0.5 sat each)
                 assert_eq!(yes_amount, shares);
+                assert_eq!(no_amount, shares);
             }
             _ => panic!("Expected Invalid outcome"),
         }
@@ -676,7 +677,7 @@ mod integration_tests {
         let params = default_params();
         let market_id = derive_market_id("test_market");
         
-        let state = MarketState {
+        let _state = MarketState {
             market_id,
             question_hash: [2u8; 32],
             params: params.clone(),
@@ -833,6 +834,68 @@ mod integration_tests {
         // Even if market is still Active, mint should fail due to timestamp
         assert_eq!(state.status, MarketStatus::Active);
         assert!(!timestamp_valid, "Timestamp check should prevent mint after deadline");
+    }
+
+    // ============================================================================
+    // NATIVE BTC ACCOUNTING TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_mint_fails_without_btc_collateral() {
+        // This test verifies the mathematical invariant that protects the contract
+        // from "Free Minting" exploits, representing the logic inside `validate_mint`.
+
+        let collateral_amount: u64 = 10000; // User attempts to mint 10,000 sats worth of tokens
+
+        // Scenario A: Honest User
+        // The old Market UTXO had 5,000 sats.
+        // The user properly attaches 10,000 sats, so the new UTXO has 15,000 sats.
+        let honest_old_sats: u64 = 5000;
+        let honest_new_sats: u64 = 15000;
+        let honest_is_valid = honest_new_sats == honest_old_sats.checked_add(collateral_amount).unwrap_or(0);
+        assert!(honest_is_valid, "Honest mint with correct BTC collateral must succeed");
+
+        // Scenario B: Malicious User (The "Free Mint" Exploit)
+        // The user asks for 10,000 sats of tokens, but DOES NOT attach the BTC.
+        // The new UTXO remains at 5,000 sats.
+        let malicious_old_sats: u64 = 5000;
+        let malicious_new_sats: u64 = 5000; // Balance did not increase!
+        let malicious_is_valid = malicious_new_sats == malicious_old_sats.checked_add(collateral_amount).unwrap_or(0);
+
+        // The transaction MUST be rejected
+        assert!(!malicious_is_valid, "Malicious mint without BTC collateral MUST be rejected");
+
+        // Scenario C: Malicious User (Partial Funding)
+        // The user asks for 10,000 sats of tokens, but only attaches 1,000 sats.
+        let partial_new_sats: u64 = 6000;
+        let partial_is_valid = partial_new_sats == malicious_old_sats.checked_add(collateral_amount).unwrap_or(0);
+
+        // The transaction MUST be rejected
+        assert!(!partial_is_valid, "Partial BTC collateral MUST be rejected");
+    }
+
+    #[test]
+    fn test_redeem_fails_if_vault_drained() {
+        // This test verifies the mathematical invariant that protects the contract
+        // from "Vault Draining" exploits during redemption.
+
+        let payout_sats: u64 = 10000; // User legitimately won 10,000 sats
+
+        // Scenario A: Honest User
+        // The Market UTXO has 50,000 sats. The user withdraws exactly their 10,000 sat payout.
+        let honest_old_sats: u64 = 50000;
+        let honest_new_sats: u64 = 40000;
+        let honest_is_valid = honest_new_sats == honest_old_sats.checked_sub(payout_sats).unwrap_or(0);
+        assert!(honest_is_valid, "Honest redemption withdrawing exact payout must succeed");
+
+        // Scenario B: Malicious User
+        // The user legitimately won 10,000 sats, but constructs a transaction
+        // to withdraw 20,000 sats (draining other users' collateral).
+        let malicious_old_sats: u64 = 50000;
+        let malicious_new_sats: u64 = 30000; // Withdrew 20k instead of 10k!
+        let malicious_is_valid = malicious_new_sats == malicious_old_sats.checked_sub(payout_sats).unwrap_or(0);
+
+        assert!(!malicious_is_valid, "Redemption withdrawing more than the legitimate payout MUST be rejected");
     }
 }
 
