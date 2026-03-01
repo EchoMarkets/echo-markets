@@ -984,18 +984,6 @@ fn validate_claim_fees(
 // HELPER FUNCTIONS
 // ========================================================================
 
-/// Parse hex string to [u8; 32]
-fn parse_hex_32(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    for i in 0..32 {
-        bytes[i] = u8::from_str_radix(&hex[i*2..i*2+2], 16).ok()?;
-    }
-    Some(bytes)
-}
-
 fn sha256_utxo(utxo_id: &UtxoId) -> [u8; 32] {
     // Hash the string representation of the UTXO ID
     let utxo_str = utxo_id.to_string();
