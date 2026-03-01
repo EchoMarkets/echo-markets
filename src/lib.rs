@@ -219,7 +219,7 @@ pub enum ResolutionProof {
 pub enum MarketOperation {
     /// Create a new prediction market
     Create {
-        question_hash: String,  // Changed to String
+        question_hash: [u8; 32],
         params: MarketParams,
     },
     
@@ -322,14 +322,7 @@ pub fn app_contract(app: &App, tx: &Transaction, x: &Data, w: &Data) -> bool {
             
             match operation {
         MarketOperation::Create { question_hash, params } => {
-            /* if question_hash.len() != 32 {
-                return false;
-            } */
-            let qh = match parse_hex_32(&question_hash) {
-                Some(h) => h,
-                None => return false,
-            };
-            validate_create(app, tx, &qh, &params)
+            validate_create(app, tx, &question_hash, &params)
         }
         MarketOperation::Mint { collateral_amount, current_timestamp } => {
             validate_mint(app, tx, collateral_amount, current_timestamp)
