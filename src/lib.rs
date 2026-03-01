@@ -148,6 +148,12 @@ pub struct MarketParams {
     pub fee_bps: u16,
     
     /// Minimum bet amount in sats
+    ///
+    /// **Bitcoin Dust Limit Protection:**
+    /// The Bitcoin network rejects outputs smaller than the dust limit (typically 330-546 sats) as spam.
+    /// Furthermore, outputs too close to this limit become "economically unspendable" because the miner fee
+    /// required to move them costs more than the UTXO is worth.
+    /// We enforce a strict minimum bet (e.g., 10,000 sats) to ensure all token redemptions are economically viable.
     pub min_bet: u64,
 }
 
@@ -410,7 +416,13 @@ fn validate_create(
         Ok(s) => s,
         Err(_) => return false,
     };
-    
+
+    // Sanity check market parameters
+    check!(params.min_bet >= 10000); // Dust limit: ensure redemptions are economically viable (see MarketParams::min_bet)
+    check!(params.fee_bps <= 5000); // Max fee is 50% (prevents underflow during minting)
+    check!(params.trading_deadline > 0);
+    check!(params.resolution_deadline > params.trading_deadline); // Resolution must happen after trading ends
+
     // 4. Validate initial state (prevent forged fees/supply/status)
     check!(state.market_id == computed_market_id);
     check!(state.question_hash == *question_hash);
@@ -687,7 +699,6 @@ fn validate_resolve(
 ) -> bool {
     // Emergency grace period: 7 days (604800 seconds)
     // Dispute period logic can reference this in future
-    #[allow(dead_code)]
     const EMERGENCY_GRACE_PERIOD: u64 = 7 * 24 * 60 * 60; // 604800 seconds
     
     let old = match find_and_parse_market_state_input(app, tx) {
@@ -715,20 +726,25 @@ fn validate_resolve(
     // Emergency resolution (after grace period) uses same validation as normal resolution
     // This ensures markets can always be resolved eventually, even if delayed
     
-    // Validate resolution proof
-    let proof_valid = match proof {
-        ResolutionProof::SignedAttestation { resolver_pubkey, signature } => {
-            // For Hackathon MVP: accept creator's signature
-            // In production: use authorized resolver set
-            verify_resolution_signature(
-                &old.market_id,
-                outcome,
-                resolver_pubkey,
-                signature,
-            )
-        }
+    // Check if we are in the emergency timeout window
+    let is_emergency_timeout = current_timestamp > old.params.resolution_deadline + EMERGENCY_GRACE_PERIOD;
+
+    if is_emergency_timeout && *outcome == Outcome::Invalid {
+        // If the oracle vanished and the grace period passed,
+        // ANYONE can resolve the market as Invalid to allow users to refund their collateral.
+        // No signature required.
+    } else {
+        // Normal resolution requires a valid cryptographic proof
+        let proof_valid = match proof {
+            ResolutionProof::SignedAttestation { resolver_pubkey, signature } => {
+                verify_resolution_signature(
+                    &old.market_id,
+                    outcome,
+                    resolver_pubkey,
+                    signature,
+                )
+            }
             ResolutionProof::CardanoOracle { tx_hash, block_hash, merkle_proof, oracle_pubkey, oracle_signature } => {
-                // Cross-chain verification (Hackathon MVP: trusted oracle signature)
                 verify_cardano_proof(
                     &old.market_id,
                     outcome,
@@ -739,9 +755,9 @@ fn validate_resolve(
                     oracle_signature,
                 )
             }
-    };
-    
-    check!(proof_valid);
+        };
+        check!(proof_valid);
+    }
     
     // Verify state transition
     check!(new.status == MarketStatus::Resolved);
