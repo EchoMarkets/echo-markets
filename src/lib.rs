@@ -1504,3 +1504,17 @@ mod tests;
 
 #[cfg(test)]
 mod integration_tests;
+
+// ============================================================================
+// V2 FEATURES (outline)
+// ============================================================================
+//
+// * Multi-Outcome support
+//   - Markets with more than two outcomes (e.g. A / B / C or scalar).
+//   - Token types and supply invariants extended for N outcomes.
+//   - Resolution and redemption logic generalised for multi-outcome payouts.
+//
+// * Dispute Period state
+//   - New market state between resolution and finality (e.g. Resolved -> Disputable -> Final).
+//   - Time window during which resolution can be challenged or confirmed.
+//   - Rules for who can dispute, evidence, and transition to final or reverted state.
