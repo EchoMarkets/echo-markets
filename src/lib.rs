@@ -476,10 +476,11 @@ fn validate_mint(
     // This ensures meaningful trades and prevents spam
     check!(collateral_amount >= old.params.min_bet);
     
-    // TODO: CRITICAL — Verify the specific Market NFT UTXO balance increases by `collateral_amount`
-    // rather than checking global tx inputs/outputs; the current logic would only force the user
-    // to pay the collateral as a miner fee instead of locking it in the market UTXO.
-    
+    // Verify Native BTC Collateral is locked inside the Market UTXO
+    let old_sats = get_market_sats_in(app, tx);
+    let new_sats = get_market_sats_out(app, tx);
+    check!(new_sats == old_sats.checked_add(collateral_amount).unwrap_or(0));
+
     // 3. Market must be active
     check!(old.status == MarketStatus::Active);
     
@@ -613,10 +614,11 @@ fn validate_burn(
     check!(new.fees == old.fees);
     
     // 8. Verify user receives collateral back
-    // Note: BTC amount verification is handled at the transaction level
-    // The burn operation itself ensures tokens are burned, and the transaction
-    // structure ensures the user receives the collateral in outputs
-    
+    // Verify Native BTC Collateral is returned to the user
+    let old_sats = get_market_sats_in(app, tx);
+    let new_sats = get_market_sats_out(app, tx);
+    check!(new_sats == old_sats.checked_sub(set_count).unwrap_or(0));
+
     // Additional validation: ensure tokens are actually in inputs
     // The count_token_burned function already handles net burn (input - output),
     // so it is just needed to verify sufficient tokens are in inputs
@@ -841,7 +843,19 @@ fn validate_redeem(
     
     check!(yes_burned == yes_amount);
     check!(no_burned == no_amount);
-    
+
+    // Calculate expected payout in Satoshis
+    let payout_sats = match resolution.outcome {
+        Outcome::Yes => yes_amount,
+        Outcome::No => no_amount,
+        Outcome::Invalid => (yes_amount + no_amount) / 2, // 0.5 sats per token refund
+    };
+
+    // Verify Native BTC Payout is deducted from the Market UTXO
+    let old_sats = get_market_sats_in(app, tx);
+    let new_sats = get_market_sats_out(app, tx);
+    check!(new_sats == old_sats.checked_sub(payout_sats).unwrap_or(0));
+
     true
 }
 
@@ -962,10 +976,12 @@ fn validate_claim_fees(
     // 5. Verify fees were actually accumulated (old.fees > 0)
     // This prevents claiming when there are no fees
     check!(old.fees > 0);
-    
-    // Note: BTC withdrawal to creator is handled at the transaction level
-    // The transaction should output old.fees sats to the creator's address
-    
+
+    // Verify Native BTC Fees are deducted from the Market UTXO
+    let old_sats = get_market_sats_in(app, tx);
+    let new_sats = get_market_sats_out(app, tx);
+    check!(new_sats == old_sats.checked_sub(old.fees).unwrap_or(0));
+
     true
 }
 
@@ -1493,6 +1509,30 @@ fn verify_creator_signature(
     
     // Verify Schnorr signature
     verifying_key.verify(&message[..], &sig).is_ok()
+}
+
+/// Gets the native Bitcoin (Satoshi) value of the input UTXO holding the Market NFT.
+fn get_market_sats_in(app: &App, tx: &Transaction) -> u64 {
+    // Find the index of the input containing the Market NFT
+    for (i, (_, charms)) in tx.ins.iter().enumerate() {
+        if charms.iter().any(|(a, _)| a.identity == app.identity) {
+            // TODO: Update `.amount` if your Charms SDK uses a different property name for the Satoshi amount
+            return tx.coin_ins.as_ref().and_then(|ins| ins.get(i)).map(|o| o.amount).unwrap_or(0);
+        }
+    }
+    0
+}
+
+/// Gets the native Bitcoin (Satoshi) value of the output UTXO holding the Market NFT.
+fn get_market_sats_out(app: &App, tx: &Transaction) -> u64 {
+    // Find the index of the output containing the Market NFT
+    for (i, charms) in tx.outs.iter().enumerate() {
+        if charms.iter().any(|(a, _)| a.identity == app.identity) {
+            // TODO: Update .amount if your Charms SDK uses a different property name for the Satoshi amount
+            return tx.coin_outs.as_ref().and_then(|outs| outs.get(i)).map(|o| o.amount).unwrap_or(0);
+        }
+    }
+    0
 }
 
 // ============================================================================
