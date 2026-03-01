@@ -217,9 +217,6 @@ pub enum ResolutionProof {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum MarketOperation {
-    /// Test operation (no fields)
-    Test,
-    
     /// Create a new prediction market
     Create {
         question_hash: String,  // Changed to String
@@ -324,10 +321,6 @@ pub fn app_contract(app: &App, tx: &Transaction, x: &Data, w: &Data) -> bool {
             let witness_bytes: Vec<u8> = w.value().unwrap_or_default();
             
             match operation {
-
-                MarketOperation::Test => {
-                    return true;  // Just pass
-                }
         MarketOperation::Create { question_hash, params } => {
             /* if question_hash.len() != 32 {
                 return false;
