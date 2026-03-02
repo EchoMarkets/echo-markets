@@ -14,16 +14,22 @@
 #   new_fees = old_fees + fee
 #
 # Usage:
-#   export yes_token_id=$(echo -n "${market_id}YES" | sha256sum | cut -d' ' -f1)
-#   export no_token_id=$(echo -n "${market_id}NO" | sha256sum | cut -d' ' -f1)
+# Ensure hex strings are parsed as bytes for Token ID derivation
+# Note: We use xxd to convert hex to binary before hashing to match lib.rs logic
+#   export yes_token_id=$(echo -n "${market_id}01" | xxd -r -p | sha256sum | cut -d' ' -f1)
+#   export no_token_id=$(echo -n "${market_id}02" | xxd -r -p | sha256sum | cut -d' ' -f1)
 #   export current_timestamp=$(date +%s)
 #   export mint_amount=1000000  # collateral in sats
-#   # Calculate fee and shares:
+# Financial Calculations
 #   export fee=$((mint_amount * fee_bps / 10000))
 #   export shares=$((mint_amount - fee))
 #   export new_yes_supply=$((old_yes_supply + shares))
 #   export new_no_supply=$((old_no_supply + shares))
 #   export new_fees=$((old_fees + fee))
+# UTXO Value Management (Sats)
+#   export new_market_balance=$((old_market_balance + mint_amount))
+# export user_btc_change=$((user_btc_input_value - mint_amount - 500)) # 500 sats for tx fees
+# 5. Final Spell Execution
 #   cat mint-shares.yaml | envsubst | charms spell check --app-bins=${app_bin}
 # =============================================================================
 
@@ -41,6 +47,7 @@ public_inputs:
       current_timestamp: ${current_timestamp}
 
 ins:
+  # The existing Market NFT UTXO
   - utxo_id: ${market_utxo_id}
     charms:
       $00:
@@ -58,12 +65,14 @@ ins:
         max_supply: ${max_supply}
         fees: ${old_fees}
         creator: ${creator_pubkey}
+  # The User's BTC source (Collateral + Gas)
   - utxo_id: ${user_btc_utxo}
     charms: {}
 
 outs:
-  # Updated market NFT with new supply and fees
+  # 1. Updated Market NFT: Holds the collateral and updated state
   - address: ${addr_market}
+    value: ${new_market_balance}
     charms:
       $00:
         market_id: ${market_id}
@@ -80,11 +89,17 @@ outs:
         max_supply: ${max_supply}
         fees: ${new_fees}
         creator: ${creator_pubkey}
-  # YES tokens to user (shares, not full collateral)
+
+  # 2. YES tokens to user
   - address: ${addr_user}
     charms:
       $01: ${shares}
-  # NO tokens to user (shares, not full collateral)
+
+  # 3. NO tokens to user
   - address: ${addr_user}
     charms:
       $02: ${shares}
+
+  # 4. BTC Change Output: Returns remaining sats to the user
+  - address: ${addr_user}
+    value: ${user_btc_change}
