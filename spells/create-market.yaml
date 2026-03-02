@@ -15,6 +15,35 @@
 #   export creator_pubkey="02..."  # 33-byte compressed pubkey hex
 #   export addr_0="tb1q..."
 #   cat create-market.yaml | envsubst | charms spell check --app-bins=${app_bin}
+#
+# Hex encoding & length invariants (parsed as raw bytes by the contract):
+#   - market_id:       64 hex chars  (32 bytes)
+#   - question_hash:   64 hex chars  (32 bytes)
+#   - creator_pubkey:  66 hex chars  (33 bytes, compressed pubkey)
+#   - DO NOT prefix any of these values with `0x` (the contract expects raw hex)
+#   - In YAML, keep these as bare scalars without extra quotes unless your tooling requires them
+#
+# Example shell checks before running the spell (run in your terminal, not via envsubst):
+#   # Length checks:
+#   #   market_id:      should be 64 characters (32 bytes)
+#   #   question_hash:  should be 64 characters (32 bytes)
+#   #   creator_pubkey: should be 66 characters (33 bytes)
+#
+#   # Verify shell output has no hidden newlines:
+#   #   echo -n "$question_hash"  | wc -c   # expect 64
+#   #   echo -n "$market_id"      | wc -c   # expect 64
+#   #   echo -n "$creator_pubkey" | wc -c   # expect 66
+#
+#   # Optional hex-only validation snippet (run manually in a shell script):
+#   #   for var in market_id question_hash creator_pubkey; do
+#   #     value=$(eval "printf '%s' \"\$$var\"")
+#   #     len=<length of value>  # compute length in your shell; avoid using ${VAR} syntax inside this YAML file
+#   #     if ! printf '%s\n' "$value" | grep -Eq '^[0-9a-fA-F]+$' || [ $((len % 2)) -ne 0 ]; then
+#   #       echo "ERROR: $var is not valid hex or has odd length."
+#   #     else
+#   #       echo "$var length is $len characters ($((len/2)) bytes)."
+#   #     fi
+#   #   done
 # =============================================================================
 
 version: 8
@@ -41,6 +70,7 @@ ins:
 
 outs:
   - address: ${addr_0}
+    value: 1000  # Give the Market NFT UTXO 1,000 sats so it doesn't get rejected as dust
     charms:
       $00:
         market_id: ${market_id}
