@@ -15,8 +15,16 @@
 # - Users can redeem equal YES + NO tokens for refund
 #
 # Usage:
-#   # Generate creator signature over SHA256("CANCEL" || market_id)
+# 1. Generate Byte-Safe Signature
+# Concatenate the string 'CANCEL' with the raw bytes of market_id
+#   export msg_hash=$(echo -n "CANCEL" | xxd -p && echo -n "${market_id}" | xxd -r -p | sha256sum | cut -d' ' -f1)
+# Sign the msg_hash with creator's private key (using your preferred CLI tool)
+#   export creator_cancel_signature="<signature_hex>"
+# 2. Financials
 #   export cancel_timestamp=$(date +%s)
+# Note: market_balance remains the same as old_market_balance
+#   export creator_btc_change=$((creator_btc_input_val - 500))
+# 3. Final Spell Execution
 #   cat cancel-market.yaml | envsubst | charms spell check --app-bins=${app_bin}
 # =============================================================================
 
@@ -30,11 +38,11 @@ public_inputs:
     Cancel: {}
 
 # Witness contains creator's signature (64 bytes)
-# Signature over: SHA256("CANCEL" || market_id)
 private_inputs:
   $00: "${creator_cancel_signature}"
 
 ins:
+  # 1. The Market NFT to be cancelled
   - utxo_id: ${market_utxo_id}
     charms:
       $00:
@@ -45,7 +53,7 @@ ins:
           resolution_deadline: ${resolution_deadline}
           fee_bps: ${fee_bps}
           min_bet: ${min_bet}
-        status: ${current_status}
+        status: Active
         resolution: null
         yes_supply: ${yes_supply}
         no_supply: ${no_supply}
@@ -53,8 +61,14 @@ ins:
         fees: ${accumulated_fees}
         creator: ${creator_pubkey}
 
+  # 2. Creator's BTC UTXO (To pay for transaction fees)
+  - utxo_id: ${creator_btc_utxo}
+    charms: {}
+
 outs:
+  # 1. Updated Market NFT: Now in Cancelled status
   - address: ${addr_market}
+    value: ${market_balance}
     charms:
       $00:
         market_id: ${market_id}
@@ -70,10 +84,14 @@ outs:
           proof:
             SignedAttestation:
               resolver_pubkey: ${creator_pubkey}
-              signature: ${cancel_signature}
+              signature: ${creator_cancel_signature}
           timestamp: ${cancel_timestamp}
         yes_supply: ${yes_supply}
         no_supply: ${no_supply}
         max_supply: ${max_supply}
         fees: ${accumulated_fees}
         creator: ${creator_pubkey}
+
+  # 2. BTC Change Output: Returning creator's gas remainder
+  - address: ${addr_creator}
+    value: ${creator_btc_change}
