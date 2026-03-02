@@ -14,8 +14,16 @@
 # - Bob inputs NO tokens, receives YES tokens
 #
 # Usage:
-#   export yes_token_id=$(echo -n "${market_id}YES" | sha256sum | cut -d' ' -f1)
-#   export no_token_id=$(echo -n "${market_id}NO" | sha256sum | cut -d' ' -f1)
+# 1. Derive Token IDs from raw Market ID bytes + Discriminator byte
+# Assuming 01 for YES and 02 for NO as established in previous work
+#   export yes_token_id=$(echo -n "${market_id}01" | xxd -r -p | sha256sum | cut -d' ' -f1)
+#   export no_token_id=$(echo -n "${market_id}02" | xxd -r -p | sha256sum | cut -d' ' -f1)
+# 2. Calculate BTC Change
+# Alice provides a 10,000 sat UTXO, transaction fee is 500 sats
+#   export alice_btc_input_value=10000
+#   export tx_fee=500
+#   export alice_btc_change=$((alice_btc_input_val - tx_fee))
+# 3. Standard Spell Execution
 #   cat trade.yaml | envsubst | charms spell check --app-bins=${app_bin}
 # =============================================================================
 
@@ -26,21 +34,31 @@ apps:
   $02: t/${no_token_id}/${app_vk}
 
 ins:
-  # Alice's YES tokens
+  # 1. Alice's YES tokens
   - utxo_id: ${alice_yes_utxo}
     charms:
       $01: ${trade_amount}
-  # Bob's NO tokens
+
+  # 2. Bob's NO tokens
   - utxo_id: ${bob_no_utxo}
     charms:
       $02: ${trade_amount}
 
+  # 3. Alice's BTC UTXO (To pay for gas/fees)
+  - utxo_id: ${alice_btc_utxo}
+    charms: {}
+
 outs:
-  # Alice receives NO tokens
+  # 1. Alice receives NO tokens
   - address: ${addr_alice}
     charms:
       $02: ${trade_amount}
-  # Bob receives YES tokens
+
+  # 2. Bob receives YES tokens
   - address: ${addr_bob}
     charms:
       $01: ${trade_amount}
+
+  # 3. BTC Change Output (Returning Alice's remaining BTC)
+  - address: ${addr_alice}
+    value: ${alice_btc_change}
