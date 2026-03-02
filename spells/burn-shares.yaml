@@ -14,8 +14,16 @@
 # Usage:
 #   export current_timestamp=$(date +%s)
 #   export burn_amount=100000  # number of complete sets to burn
+# 1. Identity Derivation (Byte-safe token IDs)
+#   export yes_token_id=$(echo -n "${market_id}01" | xxd -r -p | sha256sum | cut -d' ' -f1)
+#   export no_token_id=$(echo -n "${market_id}02" | xxd -r -p | sha256sum | cut -d' ' -f1)
+# 2. Supply Calculations
 #   export new_yes_supply=$((old_yes_supply - burn_amount))
 #   export new_no_supply=$((old_no_supply - burn_amount))
+# 3. Financial Calculations (Sats)
+#   export new_market_balance=$((old_market_balance - burn_amount))
+#   export user_btc_change=$((user_btc_input_val - 500)) # 500 sats for tx fees
+# 4. Standard Spell Execution
 #   cat burn-shares.yaml | envsubst | charms spell check --app-bins=${app_bin}
 # =============================================================================
 
@@ -33,7 +41,7 @@ public_inputs:
       current_timestamp: ${current_timestamp}
 
 ins:
-  # Market NFT
+  # 1. Market NFT (Source of collateral)
   - utxo_id: ${market_utxo_id}
     charms:
       $00:
@@ -51,18 +59,25 @@ ins:
         max_supply: ${max_supply}
         fees: ${accumulated_fees}
         creator: ${creator_pubkey}
-  # User's YES tokens to burn
+
+  # 2. User's YES tokens to burn
   - utxo_id: ${user_yes_utxo}
     charms:
       $01: ${burn_amount}
-  # User's NO tokens to burn
+
+  # 3. User's NO tokens to burn
   - utxo_id: ${user_no_utxo}
     charms:
       $02: ${burn_amount}
 
+  # 4. User's BTC UTXO (To pay for transaction fees/gas)
+  - utxo_id: ${user_btc_utxo}
+    charms: {}
+
 outs:
-  # Updated market NFT with reduced supply
+  # 1. Updated Market NFT: Reduced supply and reduced BTC balance
   - address: ${addr_market}
+    value: ${new_market_balance}
     charms:
       $00:
         market_id: ${market_id}
@@ -79,7 +94,11 @@ outs:
         max_supply: ${max_supply}
         fees: ${accumulated_fees}
         creator: ${creator_pubkey}
-  # User receives BTC (collateral returned)
-  # Tokens are NOT in outputs = burned
+
+  # 2. User receives BTC collateral back
   - address: ${addr_user}
-    charms: {}
+    value: ${burn_amount}
+
+  # 3. BTC Change Output: Returning user's gas remainder
+  - address: ${addr_user}
+    value: ${user_btc_change}
