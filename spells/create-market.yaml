@@ -4,9 +4,18 @@
 # Creates a new prediction market with initial parameters
 #
 # Usage:
+# 1. Identity Derivation (Hashing the raw binary of the UTXO ID, not the string)
 #   export in_utxo_0="txid:vout"
-#   export market_id=$(echo -n "${in_utxo_0}" | sha256sum | cut -d' ' -f1)
-#   export question_hash=$(echo -n "Will BTC reach 100k by Dec 2025?" | sha256sum | cut -d' ' -f1)
+#   export market_id=$(echo -n "${in_utxo_0}" | xxd -r -p | sha256sum | cut -d' ' -f1)
+# 2. Question Hash (Hashing the actual string content)
+#   export question_hash=$(echo -n "Will BTC reach 100k by Dec 2026?" | sha256sum | cut -d' ' -f1)
+# 3. Financials & Change Calculation
+# Assuming the input UTXO value is known (e.g., 50,000 sats)
+#   export input_value=50000
+#   export nft_reserve=1000
+#   export tx_fee=500
+#   export user_btc_change=$((input_value - nft_reserve - tx_fee))
+#
 #   export trading_deadline=1735603200
 #   export resolution_deadline=1735689600
 #   export fee_bps=100
@@ -14,6 +23,7 @@
 #   export max_supply=1000000000000
 #   export creator_pubkey="02..."  # 33-byte compressed pubkey hex
 #   export addr_0="tb1q..."
+# 4. Final Spell Execution
 #   cat create-market.yaml | envsubst | charms spell check --app-bins=${app_bin}
 #
 # Hex encoding & length invariants (parsed as raw bytes by the contract):
