@@ -65,12 +65,14 @@ public_inputs:
         min_bet: ${min_bet}
 
 ins:
+  # The source UTXO providing the sats for the NFT and transaction fees
   - utxo_id: ${in_utxo_0}
     charms: {}
 
 outs:
+  # 1. The Market NFT Output
   - address: ${addr_0}
-    value: 1000  # Give the Market NFT UTXO 1,000 sats so it doesn't get rejected as dust
+    value: 1000 # Minimum sats to carry the Market NFT state
     charms:
       $00:
         market_id: ${market_id}
@@ -87,3 +89,8 @@ outs:
         max_supply: ${max_supply}
         fees: 0
         creator: ${creator_pubkey}
+
+  # 2. BTC Change Output
+  # Returns the remaining balance from in_utxo_0 back to the creator
+  - address: ${addr_0}
+    value: ${user_btc_change}
